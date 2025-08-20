@@ -8,51 +8,61 @@ class MultiHeaderCSVAnalyzer {
     async analyze(csvFile, videoFile, settings) {
         this.updateProgress(0, 'CSVファイル読み込み中...');
         
-        // CSVファイルを読み込み（ヘッダー処理なし）
-        const rawLines = await this.readCSVLines(csvFile);
-        this.updateProgress(20, '多層ヘッダー解析中...');
-        
-        // 多層ヘッダーを解析
-        const parsedData = await this.parseMultiHeaderCSV(rawLines);
-        this.updateProgress(40, '身体部位座標抽出中...');
-        
-        // 座標データを抽出
-        const coordinates = await this.extractCoordinatesFromParsedData(parsedData);
-        this.updateProgress(60, 'Playfulness指標計算中...');
-        
-        // 解析実行
-        const metrics = await this.performPlayfulnessAnalysis(coordinates, settings);
-        this.updateProgress(80, '結果生成中...');
-        
-        const results = {
-            metrics: metrics,
-            metadata: {
-                filename: csvFile.name,
-                videoFilename: videoFile?.name,
-                settings: settings,
-                timestamp: new Date().toISOString(),
-                totalFrames: parsedData.numFrames,
-                individuals: parsedData.individuals,
-                bodyparts: parsedData.bodyparts,
-                dataPoints: metrics.length,
-                structure: this.structure
-            }
-        };
-        
-        this.updateProgress(100, '完了！');
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        return results;
+        try {
+            // CSVファイルを読み込み（ヘッダー処理なし）
+            const rawLines = await this.readCSVLines(csvFile);
+            this.updateProgress(20, '多層ヘッダー解析中...');
+            
+            // 多層ヘッダーを解析
+            const parsedData = await this.parseMultiHeaderCSV(rawLines);
+            this.updateProgress(40, '身体部位座標抽出中...');
+            
+            // 座標データを抽出
+            const coordinates = await this.extractCoordinatesFromParsedData(parsedData);
+            this.updateProgress(60, 'Playfulness指標計算中...');
+            
+            // 解析実行
+            const metrics = await this.performPlayfulnessAnalysis(coordinates, settings);
+            this.updateProgress(80, '結果生成中...');
+            
+            const results = {
+                metrics: metrics,
+                metadata: {
+                    filename: csvFile.name,
+                    videoFilename: videoFile?.name,
+                    settings: settings,
+                    timestamp: new Date().toISOString(),
+                    totalFrames: parsedData.numFrames,
+                    individuals: parsedData.individuals,
+                    bodyparts: parsedData.bodyparts,
+                    dataPoints: metrics.length,
+                    structure: this.structure
+                }
+            };
+            
+            this.updateProgress(100, '完了！');
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            return results;
+            
+        } catch (error) {
+            this.log(`エラー: ${error.message}`);
+            throw error;
+        }
     }
 
     async readCSVLines(file) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = (e) => {
-                const text = e.target.result;
-                const lines = text.split('\n').map(line => line.trim()).filter(line => line);
-                this.log(`CSV読み込み完了: ${lines.length}行`);
-                resolve(lines);
+                try {
+                    const text = e.target.result;
+                    const lines = text.split('\n').map(line => line.trim()).filter(line => line);
+                    this.log(`CSV読み込み完了: ${lines.length}行`);
+                    resolve(lines);
+                } catch (error) {
+                    reject(error);
+                }
             };
             reader.onerror = () => reject(new Error('ファイル読み込みエラー'));
             reader.readAsText(file);
@@ -67,10 +77,10 @@ class MultiHeaderCSVAnalyzer {
         }
         
         // ヘッダー行を解析
-        const scorerRow = lines[0].split(',');
-        const individualRow = lines[1].split(',');
-        const bodypartRow = lines[2].split(',');
-        const coordRow = lines[3].split(',');
+        const scorerRow = this.safeSplit(lines[0]);
+        const individualRow = this.safeSplit(lines[1]);
+        const bodypartRow = this.safeSplit(lines[2]);
+        const coordRow = this.safeSplit(lines[3]);
         
         this.log(`カラム数: ${scorerRow.length}`);
         this.log(`スコアラー: ${scorerRow[0]}`);
@@ -107,6 +117,29 @@ class MultiHeaderCSVAnalyzer {
         };
     }
 
+    safeSplit(line) {
+        // CSVの分割を安全に行う
+        const result = [];
+        let current = '';
+        let inQuotes = false;
+        
+        for (let i = 0; i < line.length; i++) {
+            const char = line[i];
+            
+            if (char === '"') {
+                inQuotes = !inQuotes;
+            } else if (char === ',' && !inQuotes) {
+                result.push(current.trim());
+                current = '';
+            } else {
+                current += char;
+            }
+        }
+        
+        result.push(current.trim());
+        return result;
+    }
+
     async extractCoordinatesFromParsedData(parsedData) {
         this.log('座標データを抽出中...');
         
@@ -127,7 +160,7 @@ class MultiHeaderCSVAnalyzer {
                 
                 // 各フレームのデータを抽出
                 for (const line of dataLines) {
-                    const values = line.split(',');
+                    const values = this.safeSplit(line);
                     
                     const x = parseFloat(values[indices.x]);
                     const y = parseFloat(values[indices.y]);
@@ -145,6 +178,15 @@ class MultiHeaderCSVAnalyzer {
                     coordinates[bodypart].y.push(NaN);
                     likelihood[bodypart].push(0.0);
                 }
+            }
+            
+            // 進捗更新（座標抽出中）
+            const progress = 40 + (parsedData.bodyparts.indexOf(bodypart) / parsedData.bodyparts.length) * 20;
+            this.updateProgress(progress, `座標抽出中: ${bodypart}`);
+            
+            // UI応答性のため
+            if (parsedData.bodyparts.indexOf(bodypart) % 5 === 0) {
+                await new Promise(resolve => setTimeout(resolve, 1));
             }
         }
         
@@ -195,10 +237,14 @@ class MultiHeaderCSVAnalyzer {
         this.log(`身体部位マッピング: ${JSON.stringify(bodypartMapping)}`);
         
         // フレームごとの特徴量を計算
-        const features = this.calculateFrameFeatures(coordinates, bodypartMapping, confidence);
+        this.log('特徴量計算開始...');
+        const features = await this.calculateFrameFeatures(coordinates, bodypartMapping, confidence);
         
         // ウィンドウ解析
+        this.log('ウィンドウ解析開始...');
         const metrics = [];
+        const totalWindows = Math.floor((numFrames - windowFrames) / strideFrames) + 1;
+        
         for (let i = 0; i <= numFrames - windowFrames; i += strideFrames) {
             const windowFeatures = this.extractWindowFeatures(features, i, i + windowFrames);
             const metric = this.calculatePlayfulnessMetrics(windowFeatures, fps);
@@ -209,11 +255,13 @@ class MultiHeaderCSVAnalyzer {
             });
             
             // 進捗更新
-            const progress = 60 + (i / (numFrames - windowFrames)) * 20;
-            this.updateProgress(progress, `解析中... ${Math.round(i/numFrames*100)}%`);
+            const windowProgress = Math.floor(i / strideFrames);
+            const progress = 60 + (windowProgress / totalWindows) * 20;
+            this.updateProgress(progress, `ウィンドウ解析: ${windowProgress + 1}/${totalWindows}`);
             
-            if (i % 20 === 0) {
-                await new Promise(resolve => setTimeout(resolve, 1));
+            // UI応答性のため
+            if (windowProgress % 5 === 0) {
+                await new Promise(resolve => setTimeout(resolve, 10));
             }
         }
         
@@ -250,7 +298,7 @@ class MultiHeaderCSVAnalyzer {
         return mapping;
     }
 
-    calculateFrameFeatures(coordinates, bodypartMapping, confidence) {
+    async calculateFrameFeatures(coordinates, bodypartMapping, confidence) {
         const numFrames = coordinates._metadata.numFrames;
         const likelihood = coordinates._likelihood;
         
@@ -262,7 +310,7 @@ class MultiHeaderCSVAnalyzer {
             overallActivity: []
         };
         
-        this.log(`特徴量計算開始: ${numFrames}フレーム`);
+        this.log(`特徴量計算: ${numFrames}フレーム処理中...`);
         
         for (let i = 0; i < numFrames; i++) {
             // 尻尾の角度計算
@@ -305,6 +353,13 @@ class MultiHeaderCSVAnalyzer {
                 coordinates, bodypartMapping, likelihood, i, confidence
             );
             features.overallActivity.push(activity);
+            
+            // 進捗表示（特徴量計算中）
+            if (i % 50 === 0) {
+                const progress = 60 + (i / numFrames) * 5;
+                this.updateProgress(progress, `特徴量計算: ${i}/${numFrames}`);
+                await new Promise(resolve => setTimeout(resolve, 1));
+            }
         }
         
         return features;
@@ -433,7 +488,7 @@ class MultiHeaderCSVAnalyzer {
         const noseMovementMean = this.nanMean(windowFeatures.noseMovement);
         const overallActivityMean = this.nanMean(windowFeatures.overallActivity);
         
-        // Playfulness指標の計算（元のアルゴリズムに基づく）
+        // Playfulness指標の計算
         
         // 1. 尻尾が上がっているかスコア（角度が小さいほど上向き）
         const tailUpScore = Math.max(0, 1.0 - tailAngleMean / 90.0);
@@ -464,7 +519,6 @@ class MultiHeaderCSVAnalyzer {
         );
         
         return {
-            timeCenter: 0, // 後で設定される
             tailAngle: tailAngleMean,
             tailMovement: tailMovementMean,
             tailVariability: tailAngleStd,
