@@ -15,7 +15,7 @@ class FileUploader {
         csvArea.addEventListener('drop', (e) => this.handleDrop(e, 'csv'));
         csvInput.addEventListener('change', (e) => this.handleFileSelect(e, 'csv'));
         
-        // 動画ファイルアップロード（既存と同じ）
+        // 動画ファイルアップロード
         const videoArea = document.getElementById('videoUploadArea');
         const videoInput = document.getElementById('videoInput');
         
@@ -28,6 +28,27 @@ class FileUploader {
         document.getElementById('analyzeBtn').addEventListener('click', () => {
             this.startAnalysis();
         });
+    }
+
+    handleDragOver(e) {
+        e.preventDefault();
+        e.currentTarget.classList.add('drag-over');
+    }
+
+    handleDrop(e, type) {
+        e.preventDefault();
+        e.currentTarget.classList.remove('drag-over');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            this.processFile(files[0], type);
+        }
+    }
+
+    handleFileSelect(e, type) {
+        const file = e.target.files[0];
+        if (file) {
+            this.processFile(file, type);
+        }
     }
 
     processFile(file, type) {
@@ -50,6 +71,17 @@ class FileUploader {
         this.updateAnalyzeButton();
     }
 
+    updateFileInfo(elementId, file) {
+        const info = document.getElementById(elementId);
+        const size = (file.size / 1024 / 1024).toFixed(2);
+        info.innerHTML = `
+            <div class="file-selected">
+                ✅ ${file.name}<br>
+                サイズ: ${size} MB
+            </div>
+        `;
+    }
+
     updateAnalyzeButton() {
         const btn = document.getElementById('analyzeBtn');
         btn.disabled = !this.csvFile;
@@ -66,8 +98,12 @@ class FileUploader {
         document.getElementById('uploadScreen').classList.add('hidden');
         document.getElementById('analysisScreen').classList.remove('hidden');
         
+        // デバッグエリアをクリア
+        const debugEl = document.getElementById('debugInfo');
+        if (debugEl) debugEl.innerHTML = '<div><strong>解析ログ:</strong></div>';
+        
         // 解析実行
-        const analyzer = new CSVCatAnalyzer();
+        const analyzer = new MultiHeaderCSVAnalyzer();
         const settings = {
             fps: parseFloat(document.getElementById('fpsInput').value),
             windowSec: parseFloat(document.getElementById('windowInput').value),
@@ -96,38 +132,5 @@ class FileUploader {
         document.getElementById('analysisScreen').classList.add('hidden');
         document.getElementById('resultsScreen').classList.add('hidden');
         document.getElementById('uploadScreen').classList.remove('hidden');
-    }
-
-    // 既存のメソッド（handleDragOver, handleDrop, handleFileSelect, updateFileInfo）
-    handleDragOver(e) {
-        e.preventDefault();
-        e.currentTarget.classList.add('drag-over');
-    }
-
-    handleDrop(e, type) {
-        e.preventDefault();
-        e.currentTarget.classList.remove('drag-over');
-        const files = e.dataTransfer.files;
-        if (files.length > 0) {
-            this.processFile(files[0], type);
-        }
-    }
-
-    handleFileSelect(e, type) {
-        const file = e.target.files[0];
-        if (file) {
-            this.processFile(file, type);
-        }
-    }
-
-    updateFileInfo(elementId, file) {
-        const info = document.getElementById(elementId);
-        const size = (file.size / 1024 / 1024).toFixed(2);
-        info.innerHTML = `
-            <div class="file-selected">
-                ✅ ${file.name}<br>
-                サイズ: ${size} MB
-            </div>
-        `;
     }
 }
