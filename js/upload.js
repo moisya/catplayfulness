@@ -1,21 +1,21 @@
 class FileUploader {
     constructor() {
-        this.h5File = null;
+        this.csvFile = null;
         this.videoFile = null;
         this.initializeUploadAreas();
     }
 
     initializeUploadAreas() {
-        // H5ファイルアップロード
-        const h5Area = document.getElementById('h5UploadArea');
-        const h5Input = document.getElementById('h5Input');
+        // CSVファイルアップロード
+        const csvArea = document.getElementById('csvUploadArea');
+        const csvInput = document.getElementById('csvInput');
         
-        h5Area.addEventListener('click', () => h5Input.click());
-        h5Area.addEventListener('dragover', this.handleDragOver);
-        h5Area.addEventListener('drop', (e) => this.handleDrop(e, 'h5'));
-        h5Input.addEventListener('change', (e) => this.handleFileSelect(e, 'h5'));
+        csvArea.addEventListener('click', () => csvInput.click());
+        csvArea.addEventListener('dragover', this.handleDragOver);
+        csvArea.addEventListener('drop', (e) => this.handleDrop(e, 'csv'));
+        csvInput.addEventListener('change', (e) => this.handleFileSelect(e, 'csv'));
         
-        // 動画ファイルアップロード
+        // 動画ファイルアップロード（既存と同じ）
         const videoArea = document.getElementById('videoUploadArea');
         const videoInput = document.getElementById('videoInput');
         
@@ -30,6 +30,75 @@ class FileUploader {
         });
     }
 
+    processFile(file, type) {
+        if (type === 'csv') {
+            if (!file.name.toLowerCase().endsWith('.csv')) {
+                alert('CSVファイルを選択してください');
+                return;
+            }
+            this.csvFile = file;
+            this.updateFileInfo('csvFileInfo', file);
+        } else if (type === 'video') {
+            if (!file.type.startsWith('video/')) {
+                alert('動画ファイルを選択してください');
+                return;
+            }
+            this.videoFile = file;
+            this.updateFileInfo('videoFileInfo', file);
+        }
+        
+        this.updateAnalyzeButton();
+    }
+
+    updateAnalyzeButton() {
+        const btn = document.getElementById('analyzeBtn');
+        btn.disabled = !this.csvFile;
+        if (this.csvFile) {
+            btn.textContent = '🚀 解析開始';
+            btn.classList.add('ready');
+        }
+    }
+
+    async startAnalysis() {
+        if (!this.csvFile) return;
+        
+        // 画面切り替え
+        document.getElementById('uploadScreen').classList.add('hidden');
+        document.getElementById('analysisScreen').classList.remove('hidden');
+        
+        // 解析実行
+        const analyzer = new CSVCatAnalyzer();
+        const settings = {
+            fps: parseFloat(document.getElementById('fpsInput').value),
+            windowSec: parseFloat(document.getElementById('windowInput').value),
+            confidence: parseFloat(document.getElementById('confidenceInput').value)
+        };
+        
+        try {
+            const results = await analyzer.analyze(this.csvFile, this.videoFile, settings);
+            this.showResults(results);
+        } catch (error) {
+            alert('解析中にエラーが発生しました: ' + error.message);
+            console.error('Analysis error:', error);
+            this.resetToUpload();
+        }
+    }
+
+    showResults(results) {
+        document.getElementById('analysisScreen').classList.add('hidden');
+        document.getElementById('resultsScreen').classList.remove('hidden');
+        
+        // 結果を表示
+        window.resultsViewer = new ResultsViewer(results, this.videoFile);
+    }
+
+    resetToUpload() {
+        document.getElementById('analysisScreen').classList.add('hidden');
+        document.getElementById('resultsScreen').classList.add('hidden');
+        document.getElementById('uploadScreen').classList.remove('hidden');
+    }
+
+    // 既存のメソッド（handleDragOver, handleDrop, handleFileSelect, updateFileInfo）
     handleDragOver(e) {
         e.preventDefault();
         e.currentTarget.classList.add('drag-over');
@@ -51,26 +120,6 @@ class FileUploader {
         }
     }
 
-    processFile(file, type) {
-        if (type === 'h5') {
-            if (!file.name.toLowerCase().endsWith('.h5')) {
-                alert('H5ファイルを選択してください');
-                return;
-            }
-            this.h5File = file;
-            this.updateFileInfo('h5FileInfo', file);
-        } else if (type === 'video') {
-            if (!file.type.startsWith('video/')) {
-                alert('動画ファイルを選択してください');
-                return;
-            }
-            this.videoFile = file;
-            this.updateFileInfo('videoFileInfo', file);
-        }
-        
-        this.updateAnalyzeButton();
-    }
-
     updateFileInfo(elementId, file) {
         const info = document.getElementById(elementId);
         const size = (file.size / 1024 / 1024).toFixed(2);
@@ -80,52 +129,5 @@ class FileUploader {
                 サイズ: ${size} MB
             </div>
         `;
-    }
-
-    updateAnalyzeButton() {
-        const btn = document.getElementById('analyzeBtn');
-        btn.disabled = !this.h5File;
-        if (this.h5File) {
-            btn.textContent = '🚀 解析開始';
-            btn.classList.add('ready');
-        }
-    }
-
-    async startAnalysis() {
-        if (!this.h5File) return;
-        
-        // 画面切り替え
-        document.getElementById('uploadScreen').classList.add('hidden');
-        document.getElementById('analysisScreen').classList.remove('hidden');
-        
-        // 解析実行
-        const analyzer = new CatAnalyzer();
-        const settings = {
-            fps: parseFloat(document.getElementById('fpsInput').value),
-            windowSec: parseFloat(document.getElementById('windowInput').value),
-            confidence: parseFloat(document.getElementById('confidenceInput').value)
-        };
-        
-        try {
-            const results = await analyzer.analyze(this.h5File, this.videoFile, settings);
-            this.showResults(results);
-        } catch (error) {
-            alert('解析中にエラーが発生しました: ' + error.message);
-            this.resetToUpload();
-        }
-    }
-
-    showResults(results) {
-        document.getElementById('analysisScreen').classList.add('hidden');
-        document.getElementById('resultsScreen').classList.remove('hidden');
-        
-        // 結果を表示
-        window.resultsViewer = new ResultsViewer(results, this.videoFile);
-    }
-
-    resetToUpload() {
-        document.getElementById('analysisScreen').classList.add('hidden');
-        document.getElementById('resultsScreen').classList.add('hidden');
-        document.getElementById('uploadScreen').classList.remove('hidden');
     }
 }
