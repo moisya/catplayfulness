@@ -1,23 +1,28 @@
-class CSVCatAnalyzer {
+class MultiHeaderCSVAnalyzer {
     constructor() {
         this.csvData = null;
         this.debugMode = true;
+        this.structure = null;
     }
 
     async analyze(csvFile, videoFile, settings) {
         this.updateProgress(0, 'CSVファイル読み込み中...');
         
-        // CSVファイルを読み込み
-        const rawData = await this.readCSVFile(csvFile);
-        this.updateProgress(25, 'データ構造解析中...');
+        // CSVファイルを読み込み（ヘッダー処理なし）
+        const rawLines = await this.readCSVLines(csvFile);
+        this.updateProgress(20, '多層ヘッダー解析中...');
         
-        // データ構造を解析
-        const parsedData = await this.parseDeepLabCutCSV(rawData);
-        this.updateProgress(50, '身体部位座標抽出中...');
+        // 多層ヘッダーを解析
+        const parsedData = await this.parseMultiHeaderCSV(rawLines);
+        this.updateProgress(40, '身体部位座標抽出中...');
+        
+        // 座標データを抽出
+        const coordinates = await this.extractCoordinatesFromParsedData(parsedData);
+        this.updateProgress(60, 'Playfulness指標計算中...');
         
         // 解析実行
-        const metrics = await this.performPlayfulnessAnalysis(parsedData, settings);
-        this.updateProgress(75, '結果生成中...');
+        const metrics = await this.performPlayfulnessAnalysis(coordinates, settings);
+        this.updateProgress(80, '結果生成中...');
         
         const results = {
             metrics: metrics,
@@ -29,7 +34,8 @@ class CSVCatAnalyzer {
                 totalFrames: parsedData.numFrames,
                 individuals: parsedData.individuals,
                 bodyparts: parsedData.bodyparts,
-                dataPoints: metrics.length
+                dataPoints: metrics.length,
+                structure: this.structure
             }
         };
         
@@ -39,148 +45,102 @@ class CSVCatAnalyzer {
         return results;
     }
 
-    async readCSVFile(file) {
+    async readCSVLines(file) {
         return new Promise((resolve, reject) => {
-            Papa.parse(file, {
-                header: true,
-                dynamicTyping: true,
-                skipEmptyLines: true,
-                complete: (results) => {
-                    this.log(`CSV読み込み完了: ${results.data.length}行`);
-                    resolve(results.data);
-                },
-                error: (error) => {
-                    this.log(`CSVエラー: ${error.message}`);
-                    reject(new Error('CSVファイルの読み込みに失敗しました: ' + error.message));
-                }
-            });
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const text = e.target.result;
+                const lines = text.split('\n').map(line => line.trim()).filter(line => line);
+                this.log(`CSV読み込み完了: ${lines.length}行`);
+                resolve(lines);
+            };
+            reader.onerror = () => reject(new Error('ファイル読み込みエラー'));
+            reader.readAsText(file);
         });
     }
 
-    async parseDeepLabCutCSV(data) {
-        this.log('DeepLabCutデータ構造を解析中...');
+    async parseMultiHeaderCSV(lines) {
+        this.log('多層ヘッダーDeepLabCutファイルを解析中...');
         
-        if (!data || data.length === 0) {
-            throw new Error('CSVファイルが空です');
+        if (lines.length < 5) {
+            throw new Error('CSVファイルのヘッダーが不足しています（最低5行必要）');
         }
         
-        // カラム名を解析
-        const headers = Object.keys(data[0]);
-        this.log(`カラム数: ${headers.length}`);
-        this.log(`サンプルヘッダー: ${headers.slice(0, 5).join(', ')}...`);
+        // ヘッダー行を解析
+        const scorerRow = lines[0].split(',');
+        const individualRow = lines[1].split(',');
+        const bodypartRow = lines[2].split(',');
+        const coordRow = lines[3].split(',');
         
-        // DeepLabCutの形式を検出
-        const structure = this.detectCSVStructure(headers);
-        this.log(`検出された構造: ${JSON.stringify(structure)}`);
+        this.log(`カラム数: ${scorerRow.length}`);
+        this.log(`スコアラー: ${scorerRow[0]}`);
+        this.log(`個体: ${[...new Set(individualRow)].join(', ')}`);
         
-        // 座標データを抽出
-        const coordinates = this.extractCoordinates(data, structure);
+        // 構造情報を保存
+        this.structure = {
+            scorer: scorerRow[0],
+            individuals: [...new Set(individualRow)],
+            bodyparts: [...new Set(bodypartRow)],
+            totalColumns: scorerRow.length
+        };
+        
+        this.log(`身体部位数: ${this.structure.bodyparts.length}`);
+        this.log(`身体部位: ${this.structure.bodyparts.slice(0, 10).join(', ')}...`);
+        
+        // データ行を解析
+        const dataLines = lines.slice(4); // ヘッダー4行をスキップ
+        const numFrames = dataLines.length;
+        
+        this.log(`データフレーム数: ${numFrames}`);
         
         return {
-            numFrames: data.length,
-            individuals: structure.individuals,
-            bodyparts: structure.bodyparts,
-            coordinates: coordinates,
-            structure: structure
+            numFrames: numFrames,
+            individuals: this.structure.individuals,
+            bodyparts: this.structure.bodyparts,
+            headers: {
+                scorer: scorerRow,
+                individual: individualRow,
+                bodypart: bodypartRow,
+                coord: coordRow
+            },
+            dataLines: dataLines
         };
     }
 
-    detectCSVStructure(headers) {
-        const structure = {
-            individuals: [],
-            bodyparts: [],
-            scorers: [],
-            format: 'unknown'
-        };
+    async extractCoordinatesFromParsedData(parsedData) {
+        this.log('座標データを抽出中...');
         
-        // パターン1: scorer_individual_bodypart_coord
-        // パターン2: scorer_bodypart_coord (single animal)
-        // パターン3: individual_bodypart_coord
-        
-        const bodypartPattern = /(nose|ear|tail|back|neck|shoulder|hip|knee|ankle|wrist|elbow|spine)/i;
-        const coordPattern = /[xy]$/i;
-        const likelihoodPattern = /likelihood$/i;
-        
-        for (const header of headers) {
-            const parts = header.split('_');
-            
-            // 座標列を探す
-            if (coordPattern.test(header) || likelihoodPattern.test(header)) {
-                // 身体部位を抽出
-                for (const part of parts) {
-                    if (bodypartPattern.test(part) && !structure.bodyparts.includes(part)) {
-                        structure.bodyparts.push(part);
-                    }
-                }
-                
-                // 個体名を推測（数字やcat、animalを含む）
-                for (const part of parts) {
-                    if (/^(cat|animal|individual|\d+)$/i.test(part) && !structure.individuals.includes(part)) {
-                        structure.individuals.push(part);
-                    }
-                }
-                
-                // スコアラーを推測
-                if (parts[0] && !/^(cat|animal|individual|\d+)$/i.test(parts[0]) && !bodypartPattern.test(parts[0])) {
-                    if (!structure.scorers.includes(parts[0])) {
-                        structure.scorers.push(parts[0]);
-                    }
-                }
-            }
-        }
-        
-        // 個体が見つからない場合はsingle animalとして扱う
-        if (structure.individuals.length === 0) {
-            structure.individuals = [null];
-        }
-        
-        this.log(`身体部位: ${structure.bodyparts}`);
-        this.log(`個体: ${structure.individuals}`);
-        this.log(`スコアラー: ${structure.scorers}`);
-        
-        return structure;
-    }
-
-    extractCoordinates(data, structure) {
         const coordinates = {};
         const likelihood = {};
+        const { headers, dataLines } = parsedData;
         
         // 各身体部位の座標を抽出
-        for (const bodypart of structure.bodyparts) {
+        for (const bodypart of parsedData.bodyparts) {
             coordinates[bodypart] = { x: [], y: [] };
             likelihood[bodypart] = [];
             
-            // カラム名のパターンを試行
-            const possiblePatterns = this.generateColumnPatterns(bodypart, structure);
+            // この身体部位のx, y, likelihoodカラムを探す
+            const indices = this.findBodypartColumns(headers, bodypart);
             
-            let xCol = null, yCol = null, likeCol = null;
-            
-            // 最初に見つかったパターンを使用
-            for (const pattern of possiblePatterns) {
-                if (data[0].hasOwnProperty(pattern.x) && data[0].hasOwnProperty(pattern.y)) {
-                    xCol = pattern.x;
-                    yCol = pattern.y;
-                    likeCol = pattern.likelihood;
-                    break;
-                }
-            }
-            
-            if (xCol && yCol) {
-                this.log(`${bodypart}: x=${xCol}, y=${yCol}, likelihood=${likeCol}`);
+            if (indices.x !== -1 && indices.y !== -1) {
+                this.log(`${bodypart}: x=${indices.x}, y=${indices.y}, likelihood=${indices.likelihood}`);
                 
-                for (const row of data) {
-                    const x = parseFloat(row[xCol]);
-                    const y = parseFloat(row[yCol]);
-                    const like = likeCol ? parseFloat(row[likeCol]) : 1.0;
+                // 各フレームのデータを抽出
+                for (const line of dataLines) {
+                    const values = line.split(',');
+                    
+                    const x = parseFloat(values[indices.x]);
+                    const y = parseFloat(values[indices.y]);
+                    const like = indices.likelihood !== -1 ? parseFloat(values[indices.likelihood]) : 1.0;
                     
                     coordinates[bodypart].x.push(isNaN(x) ? NaN : x);
                     coordinates[bodypart].y.push(isNaN(y) ? NaN : y);
                     likelihood[bodypart].push(isNaN(like) ? 0.0 : like);
                 }
             } else {
-                this.log(`${bodypart}: カラムが見つかりません`);
-                // ダミーデータで埋める
-                for (let i = 0; i < data.length; i++) {
+                this.log(`${bodypart}: 座標カラムが見つかりません`);
+                // NaNで埋める
+                for (let i = 0; i < dataLines.length; i++) {
                     coordinates[bodypart].x.push(NaN);
                     coordinates[bodypart].y.push(NaN);
                     likelihood[bodypart].push(0.0);
@@ -188,77 +148,58 @@ class CSVCatAnalyzer {
             }
         }
         
-        // likelihoodもcoordinatesに含める
+        // likelihoodも含める
         coordinates._likelihood = likelihood;
+        coordinates._metadata = {
+            numFrames: dataLines.length,
+            bodyparts: parsedData.bodyparts,
+            individuals: parsedData.individuals
+        };
         
         return coordinates;
     }
 
-    generateColumnPatterns(bodypart, structure) {
-        const patterns = [];
+    findBodypartColumns(headers, targetBodypart) {
+        const indices = { x: -1, y: -1, likelihood: -1 };
         
-        // 様々なカラム名パターンを生成
-        const variations = [bodypart, bodypart.toLowerCase(), bodypart.toUpperCase()];
-        const coords = ['x', 'y'];
-        
-        for (const individual of structure.individuals) {
-            for (const scorer of [...structure.scorers, '']) {
-                for (const bp of variations) {
-                    const prefix = [scorer, individual, bp].filter(p => p).join('_');
-                    
-                    patterns.push({
-                        x: `${prefix}_x`,
-                        y: `${prefix}_y`,
-                        likelihood: `${prefix}_likelihood`
-                    });
-                    
-                    // アンダースコアなしパターン
-                    patterns.push({
-                        x: `${prefix}x`,
-                        y: `${prefix}y`,
-                        likelihood: `${prefix}likelihood`
-                    });
+        // ヘッダーの各カラムをチェック
+        for (let i = 0; i < headers.bodypart.length; i++) {
+            if (headers.bodypart[i] === targetBodypart) {
+                const coord = headers.coord[i];
+                
+                if (coord === 'x') {
+                    indices.x = i;
+                } else if (coord === 'y') {
+                    indices.y = i;
+                } else if (coord === 'likelihood') {
+                    indices.likelihood = i;
                 }
             }
         }
         
-        // シンプルなパターンも追加
-        for (const bp of variations) {
-            patterns.push({
-                x: `${bp}_x`,
-                y: `${bp}_y`,
-                likelihood: `${bp}_likelihood`
-            });
-        }
-        
-        return patterns;
+        return indices;
     }
 
-    async performPlayfulnessAnalysis(data, settings) {
+    async performPlayfulnessAnalysis(coordinates, settings) {
         const { fps = 30, windowSec = 2.0, confidence = 0.5 } = settings;
         const windowFrames = Math.round(windowSec * fps);
         const strideFrames = Math.round(windowFrames / 4);
         
-        this.log(`解析設定: frames=${data.numFrames}, window=${windowFrames}, stride=${strideFrames}`);
+        const numFrames = coordinates._metadata.numFrames;
+        const bodyparts = coordinates._metadata.bodyparts;
         
-        // 必要な身体部位をチェック
-        const requiredParts = ['tail_base', 'tail_end', 'nose'];
-        const availableParts = data.bodyparts.filter(bp => requiredParts.some(req => 
-            bp.toLowerCase().includes(req.toLowerCase())
-        ));
+        this.log(`解析設定: frames=${numFrames}, window=${windowFrames}, stride=${strideFrames}`);
         
-        this.log(`利用可能な必須部位: ${availableParts}`);
-        
-        if (availableParts.length === 0) {
-            throw new Error('必要な身体部位（tail_base, tail_end, nose）が見つかりません');
-        }
+        // 必要な身体部位を探す
+        const bodypartMapping = this.mapRequiredBodyparts(bodyparts);
+        this.log(`身体部位マッピング: ${JSON.stringify(bodypartMapping)}`);
         
         // フレームごとの特徴量を計算
-        const features = this.calculateFrameFeatures(data, confidence);
+        const features = this.calculateFrameFeatures(coordinates, bodypartMapping, confidence);
         
         // ウィンドウ解析
         const metrics = [];
-        for (let i = 0; i <= data.numFrames - windowFrames; i += strideFrames) {
+        for (let i = 0; i <= numFrames - windowFrames; i += strideFrames) {
             const windowFeatures = this.extractWindowFeatures(features, i, i + windowFrames);
             const metric = this.calculatePlayfulnessMetrics(windowFeatures, fps);
             
@@ -268,10 +209,10 @@ class CSVCatAnalyzer {
             });
             
             // 進捗更新
-            const progress = 50 + (i / (data.numFrames - windowFrames)) * 25;
-            this.updateProgress(progress, `解析中... ${Math.round(i/data.numFrames*100)}%`);
+            const progress = 60 + (i / (numFrames - windowFrames)) * 20;
+            this.updateProgress(progress, `解析中... ${Math.round(i/numFrames*100)}%`);
             
-            if (i % 50 === 0) {
+            if (i % 20 === 0) {
                 await new Promise(resolve => setTimeout(resolve, 1));
             }
         }
@@ -280,40 +221,60 @@ class CSVCatAnalyzer {
         return metrics;
     }
 
-    calculateFrameFeatures(data, confidence) {
+    mapRequiredBodyparts(bodyparts) {
+        const mapping = {};
+        
+        // 必要な身体部位を探す
+        const searches = {
+            nose: ['nose'],
+            tail_base: ['tail_base', 'tailbase'],
+            tail_end: ['tail_end', 'tailend', 'tail_tip'],
+            left_ear_base: ['left_earbase', 'leftearbase', 'left_ear_base'],
+            right_ear_base: ['right_earbase', 'rightearbase', 'right_ear_base'],
+            left_ear_end: ['left_earend', 'leftearend', 'left_ear_end'],
+            right_ear_end: ['right_earend', 'rightearend', 'right_ear_end'],
+            neck_base: ['neck_base', 'neckbase', 'neck'],
+            back_base: ['back_base', 'backbase', 'back']
+        };
+        
+        for (const [key, candidates] of Object.entries(searches)) {
+            for (const candidate of candidates) {
+                const found = bodyparts.find(bp => bp.toLowerCase() === candidate.toLowerCase());
+                if (found) {
+                    mapping[key] = found;
+                    break;
+                }
+            }
+        }
+        
+        return mapping;
+    }
+
+    calculateFrameFeatures(coordinates, bodypartMapping, confidence) {
+        const numFrames = coordinates._metadata.numFrames;
+        const likelihood = coordinates._likelihood;
+        
         const features = {
             tailAngle: [],
             tailMovement: [],
-            noseTailDistance: [],
-            overallMovement: []
+            earPosition: [],
+            noseMovement: [],
+            overallActivity: []
         };
         
-        const coords = data.coordinates;
-        const likelihood = coords._likelihood;
+        this.log(`特徴量計算開始: ${numFrames}フレーム`);
         
-        // 利用可能な身体部位を探す
-        const tailBase = this.findBodypart(data.bodyparts, ['tail_base', 'tailbase', 'tail']);
-        const tailEnd = this.findBodypart(data.bodyparts, ['tail_end', 'tailend', 'tail_tip']);
-        const nose = this.findBodypart(data.bodyparts, ['nose', 'snout']);
-        
-        this.log(`使用する身体部位: tail_base=${tailBase}, tail_end=${tailEnd}, nose=${nose}`);
-        
-        for (let i = 0; i < data.numFrames; i++) {
-            // 尻尾の角度
-            if (tailBase && tailEnd && this.isValidPoint(coords, likelihood, tailBase, i, confidence) && 
-                this.isValidPoint(coords, likelihood, tailEnd, i, confidence)) {
-                
-                const tbX = coords[tailBase].x[i];
-                const tbY = coords[tailBase].y[i];
-                const teX = coords[tailEnd].x[i];
-                const teY = coords[tailEnd].y[i];
-                
-                const angle = Math.atan2(teY - tbY, teX - tbX) * 180 / Math.PI;
-                features.tailAngle.push(Math.abs(angle));
+        for (let i = 0; i < numFrames; i++) {
+            // 尻尾の角度計算
+            if (bodypartMapping.tail_base && bodypartMapping.tail_end) {
+                const tailAngle = this.calculateTailAngle(
+                    coordinates, bodypartMapping, likelihood, i, confidence
+                );
+                features.tailAngle.push(tailAngle);
                 
                 // 尻尾の動き（前フレームとの差）
-                if (i > 0 && !isNaN(features.tailAngle[i-1])) {
-                    const movement = Math.abs(features.tailAngle[i] - features.tailAngle[i-1]);
+                if (i > 0 && !isNaN(features.tailAngle[i-1]) && !isNaN(tailAngle)) {
+                    const movement = Math.abs(tailAngle - features.tailAngle[i-1]);
                     features.tailMovement.push(movement);
                 } else {
                     features.tailMovement.push(0);
@@ -323,116 +284,211 @@ class CSVCatAnalyzer {
                 features.tailMovement.push(0);
             }
             
-            // 鼻と尻尾の距離
-            if (nose && tailBase && this.isValidPoint(coords, likelihood, nose, i, confidence) &&
-                this.isValidPoint(coords, likelihood, tailBase, i, confidence)) {
-                
-                const nX = coords[nose].x[i];
-                const nY = coords[nose].y[i];
-                const tbX = coords[tailBase].x[i];
-                const tbY = coords[tailBase].y[i];
-                
-                const distance = Math.sqrt((nX - tbX) ** 2 + (nY - tbY) ** 2);
-                features.noseTailDistance.push(distance);
+            // 耳の位置
+            const earPos = this.calculateEarPosition(
+                coordinates, bodypartMapping, likelihood, i, confidence
+            );
+            features.earPosition.push(earPos);
+            
+            // 鼻の動き
+            if (bodypartMapping.nose && i > 0) {
+                const noseMovement = this.calculateNoseMovement(
+                    coordinates, bodypartMapping, likelihood, i, confidence
+                );
+                features.noseMovement.push(noseMovement);
             } else {
-                features.noseTailDistance.push(NaN);
+                features.noseMovement.push(0);
             }
             
-            // 全体的な動き
-            let totalMovement = 0;
-            let validParts = 0;
-            
-            for (const part of data.bodyparts) {
-                if (this.isValidPoint(coords, likelihood, part, i, confidence) && i > 0 &&
-                    this.isValidPoint(coords, likelihood, part, i-1, confidence)) {
-                    
-                    const dx = coords[part].x[i] - coords[part].x[i-1];
-                    const dy = coords[part].y[i] - coords[part].y[i-1];
-                    totalMovement += Math.sqrt(dx * dx + dy * dy);
-                    validParts++;
-                }
-            }
-            
-            features.overallMovement.push(validParts > 0 ? totalMovement / validParts : 0);
+            // 全体的な活動度
+            const activity = this.calculateOverallActivity(
+                coordinates, bodypartMapping, likelihood, i, confidence
+            );
+            features.overallActivity.push(activity);
         }
         
         return features;
     }
 
-    findBodypart(bodyparts, candidates) {
-        for (const candidate of candidates) {
-            const found = bodyparts.find(bp => 
-                bp.toLowerCase().includes(candidate.toLowerCase())
-            );
-            if (found) return found;
+    calculateTailAngle(coordinates, mapping, likelihood, frame, confidence) {
+        const tailBase = mapping.tail_base;
+        const tailEnd = mapping.tail_end;
+        
+        if (!tailBase || !tailEnd) return NaN;
+        
+        // 信頼度チェック
+        if (likelihood[tailBase][frame] < confidence || likelihood[tailEnd][frame] < confidence) {
+            return NaN;
         }
-        return null;
+        
+        const tbX = coordinates[tailBase].x[frame];
+        const tbY = coordinates[tailBase].y[frame];
+        const teX = coordinates[tailEnd].x[frame];
+        const teY = coordinates[tailEnd].y[frame];
+        
+        if (isNaN(tbX) || isNaN(tbY) || isNaN(teX) || isNaN(teY)) return NaN;
+        
+        // 尻尾のベクトル角度（垂直からの角度）
+        const dx = teX - tbX;
+        const dy = teY - tbY;
+        const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+        
+        // 垂直から測った角度を返す（0-180度）
+        return Math.abs(angle + 90) % 180;
     }
 
-    isValidPoint(coords, likelihood, bodypart, frame, confidence) {
-        if (!coords[bodypart] || !likelihood[bodypart]) return false;
+    calculateEarPosition(coordinates, mapping, likelihood, frame, confidence) {
+        const leftEar = mapping.left_ear_base;
+        const rightEar = mapping.right_ear_base;
+        const nose = mapping.nose;
         
-        const x = coords[bodypart].x[frame];
-        const y = coords[bodypart].y[frame];
-        const like = likelihood[bodypart][frame];
+        if (!leftEar || !rightEar || !nose) return NaN;
         
-        return !isNaN(x) && !isNaN(y) && like >= confidence;
+        // 信頼度チェック
+        if (likelihood[leftEar][frame] < confidence || 
+            likelihood[rightEar][frame] < confidence ||
+            likelihood[nose][frame] < confidence) {
+            return NaN;
+        }
+        
+        const leX = coordinates[leftEar].x[frame];
+        const leY = coordinates[leftEar].y[frame];
+        const reX = coordinates[rightEar].x[frame];
+        const reY = coordinates[rightEar].y[frame];
+        const nX = coordinates[nose].x[frame];
+        const nY = coordinates[nose].y[frame];
+        
+        if (isNaN(leX) || isNaN(leY) || isNaN(reX) || isNaN(reY) || isNaN(nX) || isNaN(nY)) {
+            return NaN;
+        }
+        
+        // 耳の中点から鼻への角度
+        const earCenterX = (leX + reX) / 2;
+        const earCenterY = (leY + reY) / 2;
+        const angle = Math.atan2(nY - earCenterY, nX - earCenterX) * 180 / Math.PI;
+        
+        return Math.abs(angle);
+    }
+
+    calculateNoseMovement(coordinates, mapping, likelihood, frame, confidence) {
+        const nose = mapping.nose;
+        if (!nose || frame === 0) return 0;
+        
+        if (likelihood[nose][frame] < confidence || likelihood[nose][frame-1] < confidence) {
+            return 0;
+        }
+        
+        const x1 = coordinates[nose].x[frame-1];
+        const y1 = coordinates[nose].y[frame-1];
+        const x2 = coordinates[nose].x[frame];
+        const y2 = coordinates[nose].y[frame];
+        
+        if (isNaN(x1) || isNaN(y1) || isNaN(x2) || isNaN(y2)) return 0;
+        
+        return Math.sqrt((x2-x1)**2 + (y2-y1)**2);
+    }
+
+    calculateOverallActivity(coordinates, mapping, likelihood, frame, confidence) {
+        if (frame === 0) return 0;
+        
+        let totalMovement = 0;
+        let validParts = 0;
+        
+        // 主要な身体部位の動きを計算
+        const keyParts = [mapping.nose, mapping.tail_end, mapping.left_ear_base, mapping.right_ear_base];
+        
+        for (const part of keyParts) {
+            if (part && likelihood[part][frame] >= confidence && likelihood[part][frame-1] >= confidence) {
+                const x1 = coordinates[part].x[frame-1];
+                const y1 = coordinates[part].y[frame-1];
+                const x2 = coordinates[part].x[frame];
+                const y2 = coordinates[part].y[frame];
+                
+                if (!isNaN(x1) && !isNaN(y1) && !isNaN(x2) && !isNaN(y2)) {
+                    const movement = Math.sqrt((x2-x1)**2 + (y2-y1)**2);
+                    totalMovement += movement;
+                    validParts++;
+                }
+            }
+        }
+        
+        return validParts > 0 ? totalMovement / validParts : 0;
     }
 
     extractWindowFeatures(features, start, end) {
         const window = {};
-        
         for (const [key, values] of Object.entries(features)) {
             window[key] = values.slice(start, end);
         }
-        
         return window;
     }
 
     calculatePlayfulnessMetrics(windowFeatures, fps) {
-        // 尻尾の動きの活発さ
+        // 各特徴量の統計値を計算
+        const tailAngleMean = this.nanMean(windowFeatures.tailAngle);
+        const tailAngleStd = this.nanStd(windowFeatures.tailAngle);
         const tailMovementMean = this.nanMean(windowFeatures.tailMovement);
         const tailMovementStd = this.nanStd(windowFeatures.tailMovement);
+        const earPositionMean = this.nanMean(windowFeatures.earPosition);
+        const noseMovementMean = this.nanMean(windowFeatures.noseMovement);
+        const overallActivityMean = this.nanMean(windowFeatures.overallActivity);
         
-        // 尻尾の角度の変動
-        const tailAngleStd = this.nanStd(windowFeatures.tailAngle);
+        // Playfulness指標の計算（元のアルゴリズムに基づく）
         
-        // 全体的な動きの活発さ
-        const overallMovementMean = this.nanMean(windowFeatures.overallMovement);
+        // 1. 尻尾が上がっているかスコア（角度が小さいほど上向き）
+        const tailUpScore = Math.max(0, 1.0 - tailAngleMean / 90.0);
         
-        // 動きの周波性（簡易版）
-        const movementFreq = this.estimateMovementFrequency(windowFeatures.tailMovement, fps);
+        // 2. 尻尾の動きの活発さスコア
+        const tailActivityScore = Math.min(1.0, tailMovementMean / 20.0);
         
-        // スコア計算
-        const activityScore = Math.min(1.0, tailMovementMean / 10.0);
-        const variabilityScore = Math.min(1.0, tailAngleStd / 50.0);
-        const frequencyScore = Math.min(1.0, movementFreq / 3.0);
-        const mobilityScore = Math.min(1.0, overallMovementMean / 20.0);
+        // 3. 耳が前向きかスコア
+        const earForwardScore = Math.max(0, 1.0 - earPositionMean / 90.0);
         
-        // 総合Playfulness指標
-        const playIndex = (activityScore * 0.4 + variabilityScore * 0.3 + 
-                          frequencyScore * 0.2 + mobilityScore * 0.1);
+        // 4. 全体的な動きの活発さスコア
+        const overallActivityScore = Math.min(1.0, overallActivityMean / 15.0);
+        
+        // 5. 動きの変動スコア（適度な変動は遊び行動の特徴）
+        const variabilityScore = Math.min(1.0, tailAngleStd / 30.0);
+        
+        // 6. 動きの周波数スコア
+        const frequencyScore = this.calculateFrequencyScore(windowFeatures.tailMovement, fps);
+        
+        // 重み付き総合スコア
+        const playIndex = (
+            tailUpScore * 0.25 +
+            tailActivityScore * 0.20 +
+            earForwardScore * 0.20 +
+            overallActivityScore * 0.15 +
+            variabilityScore * 0.10 +
+            frequencyScore * 0.10
+        );
         
         return {
-            tailAngle: this.nanMean(windowFeatures.tailAngle),
+            timeCenter: 0, // 後で設定される
+            tailAngle: tailAngleMean,
             tailMovement: tailMovementMean,
             tailVariability: tailAngleStd,
-            overallMovement: overallMovementMean,
-            movementFreq: movementFreq,
+            earPosition: earPositionMean,
+            noseMovement: noseMovementMean,
+            overallActivity: overallActivityMean,
             playIndex: Math.max(0, Math.min(1, playIndex)),
-            activityScore: activityScore,
+            
+            // 詳細スコア
+            tailUpScore: tailUpScore,
+            tailActivityScore: tailActivityScore,
+            earForwardScore: earForwardScore,
+            overallActivityScore: overallActivityScore,
             variabilityScore: variabilityScore,
-            frequencyScore: frequencyScore,
-            mobilityScore: mobilityScore
+            frequencyScore: frequencyScore
         };
     }
 
-    estimateMovementFrequency(movements, fps) {
+    calculateFrequencyScore(movements, fps) {
         const validMovements = movements.filter(m => !isNaN(m) && m > 0);
         if (validMovements.length < 4) return 0;
         
-        // 閾値を超える動きの頻度
-        const threshold = this.nanMean(validMovements);
+        // 動きのピークを検出
+        const threshold = this.nanMean(validMovements) * 0.5;
         let peaks = 0;
         
         for (let i = 1; i < validMovements.length - 1; i++) {
@@ -443,7 +499,14 @@ class CSVCatAnalyzer {
             }
         }
         
-        return (peaks / validMovements.length) * fps;
+        const frequency = (peaks / validMovements.length) * fps;
+        
+        // 適度な周波数（1-4Hz）を高く評価
+        if (frequency >= 1 && frequency <= 4) {
+            return Math.min(1.0, frequency / 3.0);
+        } else {
+            return Math.max(0, 1.0 - Math.abs(frequency - 2.5) / 2.5);
+        }
     }
 
     nanMean(arr) {
@@ -461,19 +524,20 @@ class CSVCatAnalyzer {
     }
 
     log(message) {
-        if (this.debugMode) {
-            console.log(`[CSVAnalyzer] ${message}`);
-            const debugEl = document.getElementById('debugInfo');
-            if (debugEl) {
-                debugEl.innerHTML += `<div>${message}</div>`;
-                debugEl.scrollTop = debugEl.scrollHeight;
-            }
+        console.log(`[MultiHeaderCSV] ${message}`);
+        const debugEl = document.getElementById('debugInfo');
+        if (debugEl) {
+            debugEl.innerHTML += `<div>${message}</div>`;
+            debugEl.scrollTop = debugEl.scrollHeight;
         }
     }
 
     updateProgress(percent, message) {
-        document.getElementById('progressFill').style.width = percent + '%';
-        document.getElementById('progressText').textContent = message;
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+        
+        if (progressFill) progressFill.style.width = percent + '%';
+        if (progressText) progressText.textContent = message;
         
         const steps = ['step1', 'step2', 'step3', 'step4'];
         const currentStep = Math.floor(percent / 25);
