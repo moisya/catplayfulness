@@ -272,9 +272,6 @@ class MultiHeaderCSVAnalyzer {
         // === フレーム特徴量 ===
         const feat = await this.calculateFrameFeaturesV2(coordinates, map, confidence, fps);
 
-        // === 姿勢・移動シグナル推定 ===
-        const posture = this.estimatePostureSignals(coordinates, map, fps, confidence);
-
         // === ウィンドウ集約 ===
         // グローバル標準偏差を事前計算（activityScore正規化用）
         const globalAngVelStd = this.std(feat.angVelAll);
@@ -283,15 +280,7 @@ class MultiHeaderCSVAnalyzer {
         for (let startIdx = 0; startIdx + win <= numFrames; startIdx += hop) {
             const endIdx = startIdx + win;
             const seg = (arr) => arr.slice(startIdx, endIdx);
-
-            // ====== 1) 姿勢・移動のウィンドウ統計 ======
-            const movingRatio = seg(posture.moving).reduce((s,v)=>s+(v?1:0),0) / win;
-            const spineStraightAvg = this.mean(seg(posture.straight));
-
-            // 起立・移動文脈か？
-            const isActive = (movingRatio > 0.35) || (spineStraightAvg > 0.65);
             
-            // ====== 2) 既存特徴量のウィンドウ統計 ======
             const tailAngle = seg(feat.tailAngle);
             const tailBend = seg(feat.tailBend);
             const earForward = seg(feat.earForward);
@@ -351,83 +340,52 @@ class MultiHeaderCSVAnalyzer {
             const totalSpecPow = this.bandPowerDFT(seg(feat.tailAngleInterp), fps, 0.3, 12);
             const wagScore = this.clamp01(playBandPow / (totalSpecPow + 1e-9));
 
-            // ====== 3) 休息時限定の tip twitch（先端ピクピク）を加点 ======
-            let tipTwitchScore = 0;
-            if (!isActive) {
-                const tb = map.tail_base, te = map.tail_end;
-                if (tb && te) {
-                    const rx=[], ry=[];
-                    for(let i=startIdx;i<endIdx;i++){
-                        const x = (coordinates[te].x[i]-coordinates[tb].x[i]);
-                        const y = (coordinates[te].y[i]-coordinates[tb].y[i]);
-                        rx.push(x); ry.push(y);
-                    }
-                    // 相対先端角
-                    const tipAng = rx.map((x,i)=> Math.atan2(ry[i],x)*180/Math.PI);
-                    const tipPow = this.bandPowerDFT(tipAng, fps, 5.0, 10.0);
-                    const tipTot = this.bandPowerDFT(tipAng, fps, 1.0, 12.0) + 1e-9;
-                    const smallAmp = this.clamp01((25 - amp)/25); // 振幅が小さいほど1
-                    tipTwitchScore = this.clamp01((tipPow/tipTot) * smallAmp);
-                }
-            }
-
-            // ====== 4) 改善版重み付け（姿勢連動） ======
+            // 改善版重み付け（合計≤1、ペナルティ別項）
+            // メイン加点: 尻尾28%, 耳24%, 曲げ18%, 振り18%, 活動12%
             const activityScore = Number.isFinite(angVelStd) ? Math.min(1, angVelStd / (this.eps + globalAngVelStd)) : 0;
+            let playfulness = tailUpScore * 0.28
+                + earForwardScore * 0.24
+                + tailBendScore * 0.18
+                + wagScore * 0.18
+                + activityScore * 0.12;
             
-            // 重み連動（姿勢で切替）
-            const W = isActive
-                ? { tail:0.28, ears:0.24, bend:0.18, wag:0.18, act:0.12, penAir:0.10, penLash:0.12, penAg:0.08, tip:0.00 }
-                : { tail:0.08, ears:0.24, bend:0.18, wag:0.12, act:0.06, penAir:0.10, penLash:0.15, penAg:0.08, tip:0.06 };
-
-            // --- ここから追記（NaN無毒化） ---
-            const S = {
-                tail: this.safe0(tailUpScore),
-                ears: this.safe0(earForwardScore),
-                bend: this.safe0(tailBendScore),
-                wag : this.safe0(wagScore),
-                act : this.safe0(activityScore),
-                tip : this.safe0(tipTwitchScore)
-            };
-            const P = {
-                air : this.safe0(airplanePenalty),
-                lash: this.safe0(lashingPenalty),
-                ag  : this.safe0(conditionalAgitation)
-            };
-            // 減点は0..1に収め、過大にならないよう上限（正点合計の80%）を設定
-            const positiveSum = (W.tail*S.tail + W.ears*S.ears + W.bend*S.bend + W.wag*S.wag + W.act*S.act + W.tip*S.tip);
-            let penaltySum = (W.penAir*P.air + W.penLash*P.lash + W.penAg*P.ag);
-            penaltySum = Math.min(penaltySum, 0.8 * this.safe0(positiveSum));
-            // --- ここまで追記 ---
-
-            // 置き換え：playfulness の計算
-            let playfulness = (
-                W.tail*S.tail + W.ears*S.ears + W.bend*S.bend + W.wag*S.wag + W.act*S.act + W.tip*S.tip
-            ) - penaltySum;
+            // ペナルティ（別項で減点）
+            playfulness -= airplanePenalty * 0.10;    // イカ耳ペナルティ
+            playfulness -= lashingPenalty * 0.12;     // バシバシペナルティ  
+            playfulness -= agitationPenalty * 0.08;   // 条件付き過活動ペナルティ
             
             const base = this.clamp01(playfulness);
-            const playIndexSafe = Number.isFinite(base) ? base : 0;
 
+            // 📊 詳細メトリクス追加（新UIで表示される）
             metrics.push({
                 timeCenter: (startIdx + endIdx) / (2 * fps),
-                playIndex : playIndexSafe,
-                // （以下は従来どおり）
-                tailAngleMean, tailBendMean, earForwardMean, wagFreqHz: wagFreq, wagPower,
-                angVelStd, noseMovement: noseMovementMean,
-                tailUpScore: S.tail, earForwardScore: S.ears, tailBendScore: S.bend,
-                wagScore: S.wag, activityScore: S.act,
-                airplanePenalty: P.air, lashingPenalty: P.lash, agitationPenalty: P.ag,
+                playIndex: Math.max(0, Math.min(1, base)),
+
+                // 🎯 メイン特徴量（メーター表示用）
+                tailAngleMean: tailAngleMean,           // 尻尾角度平均
+                tailBendMean: tailBendMean,             // 尻尾曲げ角平均
+                earForwardMean: earForwardMean,         // 耳前向き角度平均
+                wagFreqHz: wagFreq,                     // 振り周波数
+                wagPower: wagPower,                     // 振りパワー
+                angVelStd: angVelStd,                   // 角速度変動
+                noseMovement: noseMovementMean,         // 鼻の動き
+
+                // 🔍 個別スコア（デバッグ用）
+                tailUpScore: tailUpScore,
+                earForwardScore: earForwardScore,
+                tailBendScore: tailBendScore,
+                wagScore: wagScore, // 帯域ベース版
+                activityScore: activityScore,
+                airplanePenalty: airplanePenalty,    // イカ耳ペナルティ
+                lashingPenalty: lashingPenalty,      // バシバシペナルティ（新規）
+                agitationPenalty: agitationPenalty,  // 条件付き過活動ペナルティ（新規）
                 airplaneMean: airplaneMean,          // ← 追加
                 conditionalAgitation: conditionalAgitation, // ← 追加
-                tipTwitchScore: tipTwitchScore,      // ← 新規追加
 
-                // 📈 姿勢情報（新規追加）
-                movingRatio: movingRatio,
-                spineStraightness: spineStraightAvg,
-                postureState: isActive ? 'active' : 'rest',
-
-                rawTailAngles: tailAngle.filter(v => Number.isFinite(v)),
-                rawEarAngles : earForward.filter(v => Number.isFinite(v)),
-                rawAngVel    : angVel.filter(v => Number.isFinite(v))
+                // 📈 生データ統計（上級者向け）
+                rawTailAngles: tailAngle.filter(v => !isNaN(v)),
+                rawEarAngles: earForward.filter(v => !isNaN(v)),
+                rawAngVel: angVel.filter(v => !isNaN(v))
             });
 
             // 進捗更新
@@ -620,17 +578,8 @@ class MultiHeaderCSVAnalyzer {
     /* ===================== math helpers ===================== */
 
     // === helpers (ADD) ===
-    clamp01(x){
-        // NaNや±Infinityを0に丸めた上で0..1にクリップ
-        x = Number.isFinite(x) ? x : 0;
-        if (x < 0) return 0;
-        if (x > 1) return 1;
-        return x;
-    }
-
-    // 合成前に各項目を無毒化するヘルパ
-    safe0(x){ 
-        return Number.isFinite(x) ? x : 0; 
+    clamp01(x) { 
+        return Math.max(0, Math.min(1, x)); 
     }
     
     norm2(ax, ay) { 
@@ -939,125 +888,6 @@ class MultiHeaderCSVAnalyzer {
         };
         
         chart.update();
-    }
-
-    /* ===================== posture helpers ===================== */
-    
-    norm2(ax, ay){ 
-        const n = Math.hypot(ax, ay); 
-        return n ? [ax/n, ay/n] : [0,0]; 
-    }
-    
-    angleDeg(ax, ay, bx, by){ // angle between vectors (deg)
-        const [u1,u2]=this.norm2(ax,ay), [v1,v2]=this.norm2(bx,by);
-        let c = u1*v1 + u2*v2; c = Math.max(-1, Math.min(1,c));
-        return Math.acos(c)*180/Math.PI;
-    }
-    
-    movingAvg(arr, k){ 
-        if(!k||k<=1) return arr.slice();
-        const out=new Array(arr.length).fill(0); let s=0;
-        for(let i=0;i<arr.length;i++){ 
-            s+=arr[i]; 
-            if(i>=k) s-=arr[i-k]; 
-            out[i]= s/Math.min(i+1,k); 
-        }
-        return out;
-    }
-    
-    median(arr){ 
-        const v=arr.filter(Number.isFinite).slice().sort((a,b)=>a-b); 
-        if(!v.length) return NaN;
-        const m=Math.floor(v.length/2); 
-        return v.length%2?v[m]:(v[m-1]+v[m])/2;
-    }
-    
-    percentile(arr,p){ 
-        const v=arr.filter(Number.isFinite).slice().sort((a,b)=>a-b); 
-        if(!v.length) return NaN;
-        const i=(p/100)*(v.length-1); 
-        const lo=Math.floor(i), hi=Math.ceil(i); 
-        if(lo===hi) return v[lo];
-        return v[lo] + (v[hi]-v[lo])*(i-lo);
-    }
-    
-    // 簡易DFT帯域パワー（既存があればそれを使ってOK）
-    bandPowerDFT(series, fs, f1, f2){
-        const N=series.length; 
-        if(N<4) return 0; 
-        const re=new Array(N).fill(0), im=new Array(N).fill(0);
-        for(let k=0;k<N;k++){
-            let sr=0, si=0; 
-            for(let n=0;n<N;n++){ 
-                const ang=-2*Math.PI*k*n/N; 
-                sr+=series[n]*Math.cos(ang); 
-                si+=series[n]*Math.sin(ang); 
-            }
-            re[k]=sr; im[k]=si;
-        }
-        const Pxx = re.map((r,i)=> (r*r + im[i]*im[i]) / N);
-        const df = fs/N;
-        let sum=0; 
-        for(let k=Math.max(0,Math.floor(f1/df)); k<=Math.min(N-1,Math.ceil(f2/df)); k++){ 
-            sum+=Pxx[k]; 
-        }
-        return sum;
-    }
-
-    /* ===================== posture analysis ===================== */
-    
-    // 胴体中心速度・移動フラグ・脊柱の直線度（0〜1）をフレーム毎に算出
-    estimatePostureSignals(coordinates, mapping, fps, confidence=0.5){
-        const N = coordinates._metadata.numFrames;
-        const like = coordinates._likelihood;
-
-        const cx=new Array(N).fill(NaN), cy=new Array(N).fill(NaN);
-        const speed=new Array(N).fill(0), moving=new Array(N).fill(false);
-        const straight=new Array(N).fill(0);
-
-        // 胴体長の代表値（しきい値スケール用）
-        const torsoLens=[];
-        for(let i=0;i<N;i++){
-            const nb=mapping.neck_base, bm=mapping.back_middle;
-            if(nb && bm && like[nb][i]>=confidence && like[bm][i]>=confidence){
-                const x1=coordinates[nb].x[i], y1=coordinates[nb].y[i];
-                const x2=coordinates[bm].x[i], y2=coordinates[bm].y[i];
-                if(Number.isFinite(x1)&&Number.isFinite(y1)&&Number.isFinite(x2)&&Number.isFinite(y2)){
-                    torsoLens.push(Math.hypot(x2-x1,y2-y1));
-                    cx[i]=(x1+x2)/2; cy[i]=(y1+y2)/2;
-                }
-            }
-        }
-        const torsoMedian = this.median(torsoLens) || 60; // px, フォールバック
-
-        // 速度(px/s)
-        for(let i=1;i<N;i++){
-            if(Number.isFinite(cx[i])&&Number.isFinite(cy[i])&&Number.isFinite(cx[i-1])&&Number.isFinite(cy[i-1])){
-                const d = Math.hypot(cx[i]-cx[i-1], cy[i]-cy[i-1]);
-                speed[i] = d * fps;
-            }
-        }
-        const speedSm = this.movingAvg(speed, Math.max(1, Math.round(0.20*fps))); // 0.2秒平滑
-        const moveThr = Math.max(12, 0.30*torsoMedian); // 動いている判定（px/s）
-        for(let i=0;i<N;i++) moving[i] = speedSm[i] > moveThr;
-
-        // 脊柱の直線度（|cosθ|：back_end–back_middle と neck_base–back_middle のなす角）
-        for(let i=0;i<N;i++){
-            const be=mapping.back_end, bm=mapping.back_middle, nb=mapping.neck_base;
-            if(be&&bm&&nb && like[be][i]>=confidence && like[bm][i]>=confidence && like[nb][i]>=confidence){
-                const bx=coordinates[be].x[i]-coordinates[bm].x[i];
-                const by=coordinates[be].y[i]-coordinates[bm].y[i];
-                const nx=coordinates[nb].x[i]-coordinates[bm].x[i];
-                const ny=coordinates[nb].y[i]-coordinates[bm].y[i];
-                const [ubx,uby]=this.norm2(bx,by), [unx,uny]=this.norm2(nx,ny);
-                const cos = ubx*unx + uby*uny;
-                straight[i] = Math.abs(cos); // 0=曲がり, 1=一直線
-            } else {
-                straight[i] = 0;
-            }
-        }
-
-        return { speed: speedSm, moving, straight, torsoMedian };
     }
 }
 
