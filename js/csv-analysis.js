@@ -571,4 +571,31 @@ class MultiHeaderCSVAnalyzer {
                 bestF = f; 
             }
         }
-        return
+        return { f: bestF, p: bestP };
+    }
+
+    /* ===================== logging/UI ===================== */
+
+    log(msg) {
+        console.log(`[MultiHeaderCSV] ${msg}`);
+        const box = document.getElementById('debugInfo');
+        if (box) { 
+            box.innerHTML += `<div>${msg}</div>`; 
+            box.scrollTop = box.scrollHeight; 
+        }
+    }
+    
+    updateProgress(percent, message) {
+        const fill = document.getElementById('progressFill');
+        const text = document.getElementById('progressText');
+        if (fill) fill.style.width = percent + '%';
+        if (text) text.textContent = message;
+        
+        const steps = ['step1', 'step2', 'step3', 'step4'];
+        const cur = Math.floor(percent / 25);
+        steps.forEach((id, idx) => { 
+            const el = document.getElementById(id); 
+            if (el && idx <= cur) el.classList.add('completed'); 
+        });
+    }
+}
