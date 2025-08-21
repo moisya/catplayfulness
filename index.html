@@ -385,10 +385,114 @@
             }
         }
 
+        /* 特徴量詳細表示 */
+        .features-detail-section {
+            background: #f8f9fa;
+            padding: 25px;
+            border-radius: 15px;
+            margin-top: 20px;
+        }
+
+        .features-detail-section h3 {
+            margin-bottom: 20px;
+            color: #495057;
+            text-align: center;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+        }
+
+        .feature-card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            text-align: center;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+        }
+
+        .feature-card.total-score {
+            border: 2px solid #667eea;
+            background: linear-gradient(135deg, #f8f9ff 0%, #e3f2fd 100%);
+        }
+
+        .feature-icon {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        .feature-name {
+            font-weight: 600;
+            font-size: 16px;
+            color: #333;
+            margin-bottom: 8px;
+        }
+
+        .feature-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 12px;
+        }
+
+        .feature-value.large {
+            font-size: 32px;
+            color: #2c3e50;
+        }
+
+        .feature-meter {
+            width: 100%;
+            height: 12px;
+            background: #e9ecef;
+            border-radius: 6px;
+            overflow: hidden;
+            margin-bottom: 8px;
+            position: relative;
+        }
+
+        .feature-meter.large {
+            height: 16px;
+            border-radius: 8px;
+        }
+
+        .meter-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #28a745, #ffc107, #dc3545);
+            width: 0%;
+            transition: width 0.5s ease;
+            border-radius: inherit;
+        }
+
+        .feature-card.total-score .meter-fill {
+            background: linear-gradient(90deg, #667eea, #764ba2);
+        }
+
+        .feature-description {
+            font-size: 12px;
+            color: #6c757d;
+            line-height: 1.3;
+        }
+
         @media (max-width: 768px) {
             .upload-container, .analysis-container, .results-container {
                 margin: 10px;
                 padding: 20px;
+            }
+            
+            .features-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .feature-card {
+                padding: 15px;
             }
         }
     </style>
@@ -508,6 +612,72 @@
                     <h3>📈 Playfulness指標 (0-1)</h3>
                     <div class="chart-container">
                         <canvas id="playChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 特徴量詳細表示セクション -->
+            <div class="features-detail-section">
+                <h3>🔍 特徴量詳細 - 現在の時刻での内訳</h3>
+                <div id="featuresDisplay" class="features-grid">
+                    <div class="feature-card">
+                        <div class="feature-icon">🔺</div>
+                        <div class="feature-name">尻尾の上がり具合</div>
+                        <div class="feature-value" id="tailUpValue">-</div>
+                        <div class="feature-meter">
+                            <div class="meter-fill" id="tailUpMeter"></div>
+                        </div>
+                        <div class="feature-description">尻尾が上向きほど高スコア</div>
+                    </div>
+                    
+                    <div class="feature-card">
+                        <div class="feature-icon">👂</div>
+                        <div class="feature-name">耳の前向き度</div>
+                        <div class="feature-value" id="earForwardValue">-</div>
+                        <div class="feature-meter">
+                            <div class="meter-fill" id="earForwardMeter"></div>
+                        </div>
+                        <div class="feature-description">耳が前向きほど高スコア</div>
+                    </div>
+                    
+                    <div class="feature-card">
+                        <div class="feature-icon">🌊</div>
+                        <div class="feature-name">尻尾の曲げ角度</div>
+                        <div class="feature-value" id="tailBendValue">-</div>
+                        <div class="feature-meter">
+                            <div class="meter-fill" id="tailBendMeter"></div>
+                        </div>
+                        <div class="feature-description">曲げが大きいほど高スコア</div>
+                    </div>
+                    
+                    <div class="feature-card">
+                        <div class="feature-icon">〰️</div>
+                        <div class="feature-name">尻尾振り周波数</div>
+                        <div class="feature-value" id="wagFreqValue">-</div>
+                        <div class="feature-meter">
+                            <div class="meter-fill" id="wagFreqMeter"></div>
+                        </div>
+                        <div class="feature-description">4Hz付近が最適</div>
+                    </div>
+                    
+                    <div class="feature-card">
+                        <div class="feature-icon">⚡</div>
+                        <div class="feature-name">角速度運動</div>
+                        <div class="feature-value" id="angVelValue">-</div>
+                        <div class="feature-meter">
+                            <div class="meter-fill" id="angVelMeter"></div>
+                        </div>
+                        <div class="feature-description">活発な動きほど高スコア</div>
+                    </div>
+                    
+                    <div class="feature-card total-score">
+                        <div class="feature-icon">🎯</div>
+                        <div class="feature-name">総合Playfulnessスコア</div>
+                        <div class="feature-value large" id="totalPlayValue">-</div>
+                        <div class="feature-meter large">
+                            <div class="meter-fill" id="totalPlayMeter"></div>
+                        </div>
+                        <div class="feature-description">上記特徴量の重み付き合計</div>
                     </div>
                 </div>
             </div>
@@ -799,9 +969,43 @@
                                 min: 0,
                                 max: 1
                             }
+                        },
+                        onClick: (event, elements) => {
+                            if (elements.length > 0) {
+                                const dataIndex = elements[0].index;
+                                const currentMetric = this.results.metrics[dataIndex];
+                                if (currentMetric && window.lastAnalyzer) {
+                                    window.lastAnalyzer.updateFeatureDisplay(currentMetric);
+                                    
+                                    // 時刻表示も更新
+                                    const timeEl = document.getElementById('currentTime');
+                                    if (timeEl) {
+                                        timeEl.textContent = currentMetric.timeCenter.toFixed(1);
+                                    }
+                                    
+                                    // ビデオシークも実行
+                                    if (this.video && !isNaN(currentMetric.timeCenter)) {
+                                        this.video.currentTime = currentMetric.timeCenter;
+                                    }
+                                }
+                            }
+                        },
+                        onHover: (event, elements) => {
+                            if (elements.length > 0) {
+                                const dataIndex = elements[0].index;
+                                const currentMetric = this.results.metrics[dataIndex];
+                                if (currentMetric && window.lastAnalyzer) {
+                                    window.lastAnalyzer.updateFeatureDisplay(currentMetric);
+                                }
+                            }
                         }
                     }
                 });
+                
+                // 初期表示（最初のデータポイント）
+                if (this.results.metrics.length > 0 && window.lastAnalyzer) {
+                    window.lastAnalyzer.updateFeatureDisplay(this.results.metrics[0]);
+                }
             }
 
             resetToUpload() {
