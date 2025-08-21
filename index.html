@@ -4,22 +4,479 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>🐱 猫の遊び指標解析システム</title>
-    <link rel="stylesheet" href="css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .screen {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        /* アップロード画面 */
+        .upload-container {
+            background: white;
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            max-width: 600px;
+            width: 100%;
+        }
+
+        .upload-container h1 {
+            text-align: center;
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .upload-container p {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+        }
+
+        .format-notice {
+            background: #e3f2fd;
+            border: 2px solid #2196f3;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+
+        .format-notice h3 {
+            margin: 0 0 10px 0;
+            color: #1976d2;
+        }
+
+        .upload-section {
+            margin-bottom: 30px;
+        }
+
+        .upload-section h3 {
+            margin-bottom: 15px;
+            color: #444;
+        }
+
+        .upload-area {
+            border: 3px dashed #ddd;
+            border-radius: 15px;
+            padding: 40px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: #fafafa;
+        }
+
+        .upload-area:hover, .upload-area.drag-over {
+            border-color: #667eea;
+            background: #f0f4ff;
+            transform: translateY(-2px);
+        }
+
+        .upload-area.csv {
+            border-color: #2196f3;
+        }
+
+        .upload-area.csv:hover {
+            background: #e3f2fd;
+            border-color: #1976d2;
+        }
+
+        .upload-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+
+        .upload-area p {
+            color: #666;
+            margin: 0;
+        }
+
+        .file-info {
+            margin-top: 10px;
+        }
+
+        .file-selected {
+            background: #e8f5e8;
+            padding: 10px;
+            border-radius: 8px;
+            border-left: 4px solid #4caf50;
+        }
+
+        .settings-section {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            border: 1px solid #dee2e6;
+            padding: 25px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+        }
+
+        .settings-section h3 {
+            margin: 0 0 20px 0;
+            color: #495057;
+            border-bottom: 2px solid #dee2e6;
+            padding-bottom: 10px;
+        }
+
+        .setting-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding: 10px 0;
+        }
+
+        .setting-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .setting-row label {
+            font-weight: 600;
+            color: #495057;
+            flex: 1;
+        }
+
+        .setting-row input {
+            flex: 0 0 120px;
+            padding: 8px 12px;
+            border: 2px solid #ced4da;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+
+        .setting-row input:focus {
+            outline: none;
+            border-color: #2196f3;
+            box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.1);
+        }
+
+        .analyze-btn {
+            width: 100%;
+            padding: 15px;
+            font-size: 18px;
+            font-weight: bold;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: #ccc;
+            color: #999;
+        }
+
+        .analyze-btn:disabled {
+            cursor: not-allowed;
+        }
+
+        .analyze-btn.ready {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .analyze-btn.ready:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        /* 解析中画面 */
+        .analysis-container {
+            background: white;
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+        }
+
+        .progress-container {
+            margin: 30px 0;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            font-weight: 500;
+            color: #666;
+        }
+
+        .analysis-steps {
+            margin-top: 30px;
+        }
+
+        .step {
+            display: flex;
+            align-items: center;
+            padding: 12px 15px;
+            margin: 8px 0;
+            border-radius: 8px;
+            background: #f8f9fa;
+            border-left: 4px solid #ddd;
+            transition: all 0.3s ease;
+        }
+
+        .step.completed {
+            background: #e8f5e8;
+            border-left-color: #4caf50;
+            color: #2e7d32;
+            transform: translateX(10px);
+        }
+
+        .step.completed::before {
+            content: "✅ ";
+            margin-right: 8px;
+        }
+
+        .debug-info {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 20px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+
+        .debug-info div {
+            margin-bottom: 5px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 3px;
+        }
+
+        /* 結果画面 */
+        .results-container {
+            background: white;
+            padding: 30px;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            max-width: 1200px;
+            width: 100%;
+            margin: 20px;
+        }
+
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        .new-analysis-btn {
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+
+        .metadata-panel {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+
+        .metadata-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 15px;
+        }
+
+        .metadata-item {
+            padding: 10px;
+            background: white;
+            border-radius: 6px;
+            border-left: 4px solid #007bff;
+        }
+
+        .main-content-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .video-section, .main-chart-section {
+            background: #fafafa;
+            padding: 20px;
+            border-radius: 10px;
+        }
+
+        #resultVideo {
+            width: 100%;
+            max-width: 500px;
+            border-radius: 8px;
+        }
+
+        .chart-container {
+            width: 100%;
+            height: 400px;
+            position: relative;
+        }
+
+        .time-info {
+            margin: 15px 0;
+            font-weight: bold;
+            font-size: 18px;
+            color: #333;
+        }
+
+        .video-controls {
+            margin: 10px 0;
+            text-align: center;
+        }
+
+        .video-controls button {
+            margin: 0 5px;
+            padding: 8px 12px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .video-controls button:hover {
+            background: #0056b3;
+        }
+
+        @media (max-width: 1200px) {
+            .main-content-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .upload-container, .analysis-container, .results-container {
+                margin: 10px;
+                padding: 20px;
+            }
+        }
+    </style>
 </head>
 <body>
-    <!-- アップロード画面（既存と同じ） -->
+    <!-- アップロード画面 -->
     <div id="uploadScreen" class="screen">
-        <!-- 既存のアップロードUIをここに -->
+        <div class="upload-container">
+            <h1>🐱 猫の遊び指標解析システム</h1>
+            <p>DeepLabCut SuperAnimalのCSVファイルと動画をアップロードして、猫の遊び指標を自動解析します</p>
+            
+            <div class="format-notice">
+                <h3>📋 対応形式</h3>
+                <p>✅ DeepLabCut多層ヘッダーCSV</p>
+                <p>✅ SuperAnimal Quadruped形式</p>
+                <p>✅ 39種類の身体部位対応</p>
+                <p>✅ 信頼度フィルタリング</p>
+            </div>
+            
+            <!-- CSVファイルアップロード -->
+            <div class="upload-section">
+                <h3>📊 DeepLabCut CSVファイル（必須）</h3>
+                <div class="upload-area csv" id="csvUploadArea">
+                    <div class="upload-icon">📄</div>
+                    <p>多層ヘッダーCSVファイルをドラッグ&ドロップ<br>またはクリックして選択</p>
+                    <input type="file" id="csvInput" accept=".csv" hidden>
+                </div>
+                <div class="file-info" id="csvFileInfo"></div>
+            </div>
+            
+            <!-- 動画ファイルアップロード -->
+            <div class="upload-section">
+                <h3>🎥 動画ファイル（推奨）</h3>
+                <div class="upload-area" id="videoUploadArea">
+                    <div class="upload-icon">🎬</div>
+                    <p>対応する動画ファイルをドラッグ&ドロップ<br>またはクリックして選択</p>
+                    <input type="file" id="videoInput" accept="video/*" hidden>
+                </div>
+                <div class="file-info" id="videoFileInfo"></div>
+            </div>
+            
+            <!-- 解析設定 -->
+            <div class="settings-section">
+                <h3>⚙️ 解析設定</h3>
+                <div class="setting-row">
+                    <label>FPS:</label>
+                    <input type="number" id="fpsInput" value="30" min="1" max="120">
+                </div>
+                <div class="setting-row">
+                    <label>ウィンドウサイズ（秒）:</label>
+                    <input type="number" id="windowInput" value="2.0" min="0.5" max="10" step="0.5">
+                </div>
+                <div class="setting-row">
+                    <label>信頼度しきい値:</label>
+                    <input type="number" id="confidenceInput" value="0.5" min="0" max="1" step="0.1">
+                </div>
+            </div>
+            
+            <!-- 解析開始ボタン -->
+            <button id="analyzeBtn" class="analyze-btn" disabled>
+                🚀 解析開始
+            </button>
+        </div>
     </div>
     
-    <!-- 解析中画面（既存と同じ） -->
+    <!-- 解析中画面 -->
     <div id="analysisScreen" class="screen hidden">
-        <!-- 既存の解析中UIをここに -->
+        <div class="analysis-container">
+            <h2>🔍 解析中...</h2>
+            <div class="progress-container">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-text" id="progressText">CSVファイル読み込み中...</div>
+            </div>
+            <div class="analysis-steps">
+                <div class="step" id="step1">📄 多層ヘッダー解析</div>
+                <div class="step" id="step2">🔍 座標データ抽出</div>
+                <div class="step" id="step3">📊 特徴量計算</div>
+                <div class="step" id="step4">🎨 Playfulness指標生成</div>
+            </div>
+            <div id="debugInfo" class="debug-info">
+                <div><strong>解析ログ:</strong></div>
+            </div>
+        </div>
     </div>
     
-    <!-- 結果表示画面（大幅強化版） -->
+    <!-- 結果表示画面 -->
     <div id="resultsScreen" class="screen hidden">
         <div class="results-container">
             <div class="results-header">
@@ -27,15 +484,12 @@
                 <button id="newAnalysisBtn" class="new-analysis-btn">新しい解析</button>
             </div>
             
-            <!-- メタデータパネル -->
             <div class="metadata-panel">
                 <h3>📋 解析情報</h3>
                 <div id="analysisMetadata"></div>
             </div>
             
-            <!-- メインコンテンツエリア -->
             <div class="main-content-grid">
-                <!-- 動画セクション -->
                 <div class="video-section">
                     <h3>🎥 動画</h3>
                     <video id="resultVideo" controls preload="metadata"></video>
@@ -50,139 +504,345 @@
                     </div>
                 </div>
                 
-                <!-- Playfulnessメイングラフ -->
                 <div class="main-chart-section">
                     <h3>📈 Playfulness指標 (0-1)</h3>
                     <div class="chart-container">
                         <canvas id="playChart"></canvas>
                     </div>
                 </div>
-                
-                <!-- リアルタイム特徴量パネル -->
-                <div class="features-panel">
-                    <h3>🎯 現在の特徴量</h3>
-                    <div class="feature-meters">
-                        <div class="feature-meter">
-                            <div class="feature-label">🐾 尻尾上がり具合</div>
-                            <div class="meter-container">
-                                <div class="meter-bar">
-                                    <div class="meter-fill tail-up" id="tailUpMeter"></div>
-                                </div>
-                                <div class="meter-value" id="tailUpValue">--</div>
-                            </div>
-                            <div class="feature-desc">高いほど尻尾が立っている</div>
-                        </div>
-                        
-                        <div class="feature-meter">
-                            <div class="feature-label">👂 耳の前向き度</div>
-                            <div class="meter-container">
-                                <div class="meter-bar">
-                                    <div class="meter-fill ear-forward" id="earForwardMeter"></div>
-                                </div>
-                                <div class="meter-value" id="earForwardValue">--</div>
-                            </div>
-                            <div class="feature-desc">高いほど耳が前向き</div>
-                        </div>
-                        
-                        <div class="feature-meter">
-                            <div class="feature-label">🌀 尻尾曲げ角度</div>
-                            <div class="meter-container">
-                                <div class="meter-bar">
-                                    <div class="meter-fill tail-bend" id="tailBendMeter"></div>
-                                </div>
-                                <div class="meter-value" id="tailBendValue">--</div>
-                            </div>
-                            <div class="feature-desc">高いほど尻尾が曲がっている</div>
-                        </div>
-                        
-                        <div class="feature-meter">
-                            <div class="feature-label">🌊 尻尾振り周波数</div>
-                            <div class="meter-container">
-                                <div class="meter-bar">
-                                    <div class="meter-fill wag-freq" id="wagFreqMeter"></div>
-                                </div>
-                                <div class="meter-value" id="wagFreqValue">--</div>
-                            </div>
-                            <div class="feature-desc">4Hz付近が最適</div>
-                        </div>
-                        
-                        <div class="feature-meter">
-                            <div class="feature-label">⚡ 角速度変動</div>
-                            <div class="meter-container">
-                                <div class="meter-bar">
-                                    <div class="meter-fill angular-vel" id="angularVelMeter"></div>
-                                </div>
-                                <div class="meter-value" id="angularVelValue">--</div>
-                            </div>
-                            <div class="feature-desc">高いほど動きが活発</div>
-                        </div>
-                    </div>
-                    
-                    <!-- 総合スコア表示 -->
-                    <div class="total-score">
-                        <div class="score-label">🎯 総合Playfulness</div>
-                        <div class="score-circle">
-                            <div class="score-value" id="totalScoreValue">0.00</div>
-                        </div>
-                        <div class="score-desc" id="scoreDescription">解析中...</div>
-                    </div>
-                </div>
-                
-                <!-- 詳細特徴量グラフ -->
-                <div class="detailed-charts-section">
-                    <h3>📊 特徴量詳細グラフ</h3>
-                    <div class="mini-charts">
-                        <div class="mini-chart">
-                            <h4>尻尾角度</h4>
-                            <canvas id="tailAngleChart"></canvas>
-                        </div>
-                        <div class="mini-chart">
-                            <h4>耳の角度</h4>
-                            <canvas id="earAngleChart"></canvas>
-                        </div>
-                        <div class="mini-chart">
-                            <h4>尻尾振り周波数</h4>
-                            <canvas id="wagFreqChart"></canvas>
-                        </div>
-                        <div class="mini-chart">
-                            <h4>角速度変動</h4>
-                            <canvas id="angularVelChart"></canvas>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- 詳細データテーブル -->
-            <div class="detailed-table-section">
-                <h3>📋 詳細データ表</h3>
-                <div class="table-controls">
-                    <button onclick="exportDetailedCSV()">📥 詳細CSVダウンロード</button>
-                    <button onclick="exportImages()">🖼️ グラフ画像保存</button>
-                </div>
-                <div class="table-container">
-                    <table id="detailedDataTable">
-                        <thead>
-                            <tr>
-                                <th>時刻(s)</th>
-                                <th>Playfulness</th>
-                                <th>尻尾上がり</th>
-                                <th>耳前向き</th>
-                                <th>尻尾曲げ</th>
-                                <th>振り周波数</th>
-                                <th>角速度変動</th>
-                            </tr>
-                        </thead>
-                        <tbody id="detailedDataBody">
-                        </tbody>
-                    </table>
-                </div>
             </div>
         </div>
     </div>
 
+    <!-- スクリプト読み込み -->
     <script src="js/csv-analysis.js"></script>
-    <script src="js/upload.js"></script>
-    <script src="js/enhanced-chart.js"></script>
-    <script src="js/app.js"></script>
+    <script>
+        // シンプルなFileUploaderクラス（upload.js代替）
+        class FileUploader {
+            constructor() {
+                this.csvFile = null;
+                this.videoFile = null;
+                this.initializeUploadAreas();
+            }
+
+            initializeUploadAreas() {
+                // CSVファイルアップロード
+                const csvArea = document.getElementById('csvUploadArea');
+                const csvInput = document.getElementById('csvInput');
+                
+                if (csvArea && csvInput) {
+                    csvArea.addEventListener('click', () => csvInput.click());
+                    csvArea.addEventListener('dragover', this.handleDragOver.bind(this));
+                    csvArea.addEventListener('drop', (e) => this.handleDrop(e, 'csv'));
+                    csvInput.addEventListener('change', (e) => this.handleFileSelect(e, 'csv'));
+                }
+                
+                // 動画ファイルアップロード
+                const videoArea = document.getElementById('videoUploadArea');
+                const videoInput = document.getElementById('videoInput');
+                
+                if (videoArea && videoInput) {
+                    videoArea.addEventListener('click', () => videoInput.click());
+                    videoArea.addEventListener('dragover', this.handleDragOver.bind(this));
+                    videoArea.addEventListener('drop', (e) => this.handleDrop(e, 'video'));
+                    videoInput.addEventListener('change', (e) => this.handleFileSelect(e, 'video'));
+                }
+                
+                // 解析ボタン
+                const analyzeBtn = document.getElementById('analyzeBtn');
+                if (analyzeBtn) {
+                    analyzeBtn.addEventListener('click', () => {
+                        this.startAnalysis();
+                    });
+                }
+            }
+
+            handleDragOver(e) {
+                e.preventDefault();
+                e.currentTarget.classList.add('drag-over');
+            }
+
+            handleDrop(e, type) {
+                e.preventDefault();
+                e.currentTarget.classList.remove('drag-over');
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    this.processFile(files[0], type);
+                }
+            }
+
+            handleFileSelect(e, type) {
+                const file = e.target.files[0];
+                if (file) {
+                    this.processFile(file, type);
+                }
+            }
+
+            processFile(file, type) {
+                if (type === 'csv') {
+                    if (!file.name.toLowerCase().endsWith('.csv')) {
+                        alert('CSVファイルを選択してください');
+                        return;
+                    }
+                    this.csvFile = file;
+                    this.updateFileInfo('csvFileInfo', file);
+                } else if (type === 'video') {
+                    if (!file.type.startsWith('video/')) {
+                        alert('動画ファイルを選択してください');
+                        return;
+                    }
+                    this.videoFile = file;
+                    this.updateFileInfo('videoFileInfo', file);
+                }
+                
+                this.updateAnalyzeButton();
+            }
+
+            updateFileInfo(elementId, file) {
+                const info = document.getElementById(elementId);
+                if (info) {
+                    const size = (file.size / 1024 / 1024).toFixed(2);
+                    info.innerHTML = `
+                        <div class="file-selected">
+                            ✅ ${file.name}<br>
+                            サイズ: ${size} MB
+                        </div>
+                    `;
+                }
+            }
+
+            updateAnalyzeButton() {
+                const btn = document.getElementById('analyzeBtn');
+                if (btn) {
+                    btn.disabled = !this.csvFile;
+                    if (this.csvFile) {
+                        btn.textContent = '🚀 解析開始';
+                        btn.classList.add('ready');
+                    }
+                }
+            }
+
+            async startAnalysis() {
+                if (!this.csvFile) return;
+                
+                // 画面切り替え
+                document.getElementById('uploadScreen').classList.add('hidden');
+                document.getElementById('analysisScreen').classList.remove('hidden');
+                
+                // デバッグエリアをクリア
+                const debugEl = document.getElementById('debugInfo');
+                if (debugEl) debugEl.innerHTML = '<div><strong>解析ログ:</strong></div>';
+                
+                // 解析実行
+                const analyzer = new MultiHeaderCSVAnalyzer();
+                const settings = {
+                    fps: parseFloat(document.getElementById('fpsInput').value),
+                    windowSec: parseFloat(document.getElementById('windowInput').value),
+                    confidence: parseFloat(document.getElementById('confidenceInput').value)
+                };
+                
+                try {
+                    const results = await analyzer.analyze(this.csvFile, this.videoFile, settings);
+                    this.showResults(results);
+                } catch (error) {
+                    alert('解析中にエラーが発生しました: ' + error.message);
+                    console.error('Analysis error:', error);
+                    this.resetToUpload();
+                }
+            }
+
+            showResults(results) {
+                document.getElementById('analysisScreen').classList.add('hidden');
+                document.getElementById('resultsScreen').classList.remove('hidden');
+                
+                // 結果を表示
+                window.resultsViewer = new ResultsViewer(results, this.videoFile);
+            }
+
+            resetToUpload() {
+                document.getElementById('analysisScreen').classList.add('hidden');
+                document.getElementById('resultsScreen').classList.add('hidden');
+                document.getElementById('uploadScreen').classList.remove('hidden');
+            }
+        }
+
+        // シンプルなResultsViewerクラス
+        class ResultsViewer {
+            constructor(results, videoFile) {
+                this.results = results;
+                this.videoFile = videoFile;
+                this.chart = null;
+                this.video = null;
+                
+                this.initializeResults();
+            }
+
+            initializeResults() {
+                this.displayMetadata();
+                this.setupVideo();
+                this.initializeChart();
+                
+                // 新しい解析ボタン
+                const newBtn = document.getElementById('newAnalysisBtn');
+                if (newBtn) {
+                    newBtn.addEventListener('click', () => {
+                        this.resetToUpload();
+                    });
+                }
+            }
+
+            displayMetadata() {
+                const metadata = this.results.metadata;
+                const metadataEl = document.getElementById('analysisMetadata');
+                
+                if (metadataEl) {
+                    const avgPlayfulness = this.results.metrics.reduce((sum, m) => sum + m.playIndex, 0) / this.results.metrics.length;
+                    const minPlayfulness = Math.min(...this.results.metrics.map(m => m.playIndex));
+                    const maxPlayfulness = Math.max(...this.results.metrics.map(m => m.playIndex));
+                    
+                    metadataEl.innerHTML = `
+                        <div class="metadata-grid">
+                            <div class="metadata-item">
+                                <strong>📁 ファイル:</strong> ${metadata.filename}
+                            </div>
+                            <div class="metadata-item">
+                                <strong>🎥 動画:</strong> ${metadata.videoFilename || 'なし'}
+                            </div>
+                            <div class="metadata-item">
+                                <strong>⏱️ 解析時刻:</strong> ${new Date(metadata.timestamp).toLocaleString('ja-JP')}
+                            </div>
+                            <div class="metadata-item">
+                                <strong>📊 データポイント:</strong> ${metadata.dataPoints}個
+                            </div>
+                            <div class="metadata-item">
+                                <strong>🎯 平均Playfulness:</strong> ${avgPlayfulness.toFixed(3)}
+                            </div>
+                            <div class="metadata-item">
+                                <strong>📈 範囲:</strong> ${minPlayfulness.toFixed(3)} - ${maxPlayfulness.toFixed(3)}
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+
+            setupVideo() {
+                this.video = document.getElementById('resultVideo');
+                
+                if (this.video && this.videoFile) {
+                    const videoURL = URL.createObjectURL(this.videoFile);
+                    this.video.src = videoURL;
+                    this.video.style.display = 'block';
+                }
+            }
+
+            initializeChart() {
+                const ctx = document.getElementById('playChart');
+                if (!ctx) return;
+                
+                const chartCtx = ctx.getContext('2d');
+                
+                const data = this.results.metrics.map(metric => ({
+                    x: metric.timeCenter,
+                    y: metric.playIndex
+                }));
+
+                this.chart = new Chart(chartCtx, {
+                    type: 'line',
+                    data: {
+                        datasets: [{
+                            label: 'Playfulness Index',
+                            data: data,
+                            borderColor: 'rgb(255, 99, 132)',
+                            backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                            borderWidth: 3,
+                            pointRadius: 4,
+                            pointHoverRadius: 8,
+                            pointBackgroundColor: 'rgb(255, 99, 132)',
+                            pointBorderColor: '#fff',
+                            pointBorderWidth: 2,
+                            tension: 0.4,
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: {
+                            intersect: false,
+                            mode: 'nearest'
+                        },
+                        plugins: {
+                            legend: {
+                                display: true,
+                                position: 'top'
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    title: (context) => `時刻: ${context[0].parsed.x.toFixed(1)}秒`,
+                                    label: (context) => `Playfulness: ${context.parsed.y.toFixed(3)}`
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                title: {
+                                    display: true,
+                                    text: '時間 (秒)'
+                                }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: 'Playfulness Index'
+                                },
+                                min: 0,
+                                max: 1
+                            }
+                        }
+                    }
+                });
+            }
+
+            resetToUpload() {
+                document.getElementById('resultsScreen').classList.add('hidden');
+                document.getElementById('uploadScreen').classList.remove('hidden');
+                
+                if (this.video && this.video.src) {
+                    URL.revokeObjectURL(this.video.src);
+                }
+                
+                if (this.chart) {
+                    this.chart.destroy();
+                }
+                
+                window.uploader = new FileUploader();
+            }
+        }
+
+        // グローバル関数
+        function playPause() {
+            const video = document.getElementById('resultVideo');
+            if (video) {
+                if (video.paused) {
+                    video.play();
+                } else {
+                    video.pause();
+                }
+            }
+        }
+
+        function seekToTime(seconds) {
+            const video = document.getElementById('resultVideo');
+            if (video) {
+                video.currentTime = seconds;
+            }
+        }
+
+        // 初期化
+        document.addEventListener('DOMContentLoaded', function() {
+            window.uploader = new FileUploader();
+        });
+    </script>
 </body>
 </html>
