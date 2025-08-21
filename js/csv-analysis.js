@@ -90,10 +90,6 @@ class MultiHeaderCSVAnalyzer {
 
     /* ===================== parser ===================== */
 
-    /**
-     * DLCのMultiIndex CSVは通常 3段(Scorer/Bodypart/Coord) か 4段(Scorer/Individuals/Bodypart/Coord)
-     * 先頭数行を走査して「coords 行（x,y,likelihood）」を見つけ、そこまでをヘッダとみなす
-     */
     async parseMultiHeaderCSV(lines) {
         // 先頭最大6行を候補として見る
         const head = [];
@@ -286,9 +282,19 @@ class MultiHeaderCSVAnalyzer {
             const tailBend = seg(feat.tailBend);
             const earForward = seg(feat.earForward);
             const angVel = seg(feat.angVel);
+            const noseSpeed = seg(feat.noseSpeed);
 
-            const wag = this.dominantFreqHz(seg(feat.tailAngleInterp), fps); // しっぽ揺れ周波数
-            const wagPref = (Number.isFinite(wag.f)) ? Math.exp(-0.5 * Math.pow((wag.f - 4) / (1.5), 2)) : 0.5; // 4Hz付近を好む
+            // 周波数解析
+            const wag = this.dominantFreqHz(seg(feat.tailAngleInterp), fps);
+            const wagFreq = wag.f || 0;
+            const wagPower = wag.p || 0;
+
+            // 特徴量統計
+            const tailAngleMean = this.mean(tailAngle);
+            const tailBendMean = this.mean(tailBend);
+            const earForwardMean = this.mean(earForward);
+            const angVelStd = this.std(angVel);
+            const noseMovementMean = this.mean(noseSpeed);
 
             // 0–1正規化（パーセンタイル）
             const nz = v => v.filter(Number.isFinite);
@@ -302,10 +308,12 @@ class MultiHeaderCSVAnalyzer {
             const tailUpScore = this.inverseArr(pScale(tailAngle));     // 角が小さい＝上向き
             const earFwdScore = this.inverseArr(pScale(earForward));    // 小さい＝前向き
             const tailBendScore = pScale(tailBend);                     // 大きい＝曲げ大
-            const angVelStd = this.std(angVel);
-            const agitationPen = this.mean(seg(feat.noseSpeed));        // 全体の粗い活動（高いほど減点）
+            const agitationPen = this.mean(noseSpeed);                  // 全体の粗い活動（高いほど減点）
 
-            // 合成（前に作ったのと同等のバランス）
+            // 周波数スコア（4Hz付近を最適とする）
+            const wagPref = (Number.isFinite(wagFreq)) ? Math.exp(-0.5 * Math.pow((wagFreq - 4) / (1.5), 2)) : 0.5;
+
+            // 合成（重み付きスコア）
             const w_tailUp = 0.35, w_ear = 0.35, w_bend = 0.25, w_wag = 0.10, w_ang = 0.15, w_agit = -0.20;
             const base = this.mean(tailUpScore) * w_tailUp
                 + this.mean(earFwdScore) * w_ear
@@ -314,17 +322,31 @@ class MultiHeaderCSVAnalyzer {
                 + (Number.isFinite(angVelStd) ? (angVelStd / (this.eps + this.std(seg(feat.angVelAll)))) * w_ang : 0)
                 + (Number.isFinite(agitationPen) ? (1 - Math.min(1, agitationPen / 30)) * w_agit : 0);
 
+            // 📊 詳細メトリクス追加（新UIで表示される）
             metrics.push({
                 timeCenter: (a + b) / (2 * fps),
                 playIndex: Math.max(0, Math.min(1, base)),
 
-                // デバッグ用に主要指標も出す
-                tailAngleMean: this.mean(tailAngle),
-                tailBendMean: this.mean(tailBend),
-                earForwardMean: this.mean(earForward),
-                wagFreqHz: wag.f || 0,
-                wagPower: wag.p || 0,
-                angVelStd: angVelStd
+                // 🎯 メイン特徴量（メーター表示用）
+                tailAngleMean: tailAngleMean,           // 尻尾角度平均
+                tailBendMean: tailBendMean,             // 尻尾曲げ角平均
+                earForwardMean: earForwardMean,         // 耳前向き角度平均
+                wagFreqHz: wagFreq,                     // 振り周波数
+                wagPower: wagPower,                     // 振りパワー
+                angVelStd: angVelStd,                   // 角速度変動
+                noseMovement: noseMovementMean,         // 鼻の動き
+
+                // 🔍 個別スコア（デバッグ用）
+                tailUpScore: this.mean(tailUpScore),
+                earForwardScore: this.mean(earFwdScore),
+                tailBendScore: this.mean(tailBendScore),
+                wagScore: wagPref,
+                activityScore: Number.isFinite(angVelStd) ? Math.min(1, angVelStd / 50) : 0,
+
+                // 📈 生データ統計（上級者向け）
+                rawTailAngles: tailAngle.filter(v => !isNaN(v)),
+                rawEarAngles: earForward.filter(v => !isNaN(v)),
+                rawAngVel: angVel.filter(v => !isNaN(v))
             });
 
             // 進捗更新
@@ -549,31 +571,4 @@ class MultiHeaderCSVAnalyzer {
                 bestF = f; 
             }
         }
-        return { f: bestF, p: bestP };
-    }
-
-    /* ===================== logging/UI ===================== */
-
-    log(msg) {
-        console.log(`[MultiHeaderCSV] ${msg}`);
-        const box = document.getElementById('debugInfo');
-        if (box) { 
-            box.innerHTML += `<div>${msg}</div>`; 
-            box.scrollTop = box.scrollHeight; 
-        }
-    }
-    
-    updateProgress(percent, message) {
-        const fill = document.getElementById('progressFill');
-        const text = document.getElementById('progressText');
-        if (fill) fill.style.width = percent + '%';
-        if (text) text.textContent = message;
-        
-        const steps = ['step1', 'step2', 'step3', 'step4'];
-        const cur = Math.floor(percent / 25);
-        steps.forEach((id, idx) => { 
-            const el = document.getElementById(id); 
-            if (el && idx <= cur) el.classList.add('completed'); 
-        });
-    }
-}
+        return
