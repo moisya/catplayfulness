@@ -782,20 +782,20 @@ class MultiHeaderCSVAnalyzer {
                 description: `変動: ${(currentMetric.angVelStd || 0).toFixed(1)}°/s`
             },
             airplane: {
-                raw: currentMetric.airplaneMean,
-                score: currentMetric.airplanePenalty,
+                raw: currentMetric.airplaneMean || 0,
+                score: currentMetric.airplanePenalty || 0,
                 unit: '',
                 description: `イカ耳率: ${((currentMetric.airplaneMean || 0) * 100).toFixed(1)}%`
             },
             lashing: {
-                raw: currentMetric.lashingPenalty,
-                score: currentMetric.lashingPenalty,
+                raw: currentMetric.lashingPenalty || 0,
+                score: currentMetric.lashingPenalty || 0,
                 unit: '',
                 description: `バシバシ強度: ${(currentMetric.lashingPenalty || 0).toFixed(3)}`
             },
             agitation: {
-                raw: currentMetric.conditionalAgitation,
-                score: currentMetric.conditionalAgitation,
+                raw: currentMetric.conditionalAgitation || 0,
+                score: currentMetric.conditionalAgitation || 0,
                 unit: '',
                 description: `過活動度: ${(currentMetric.conditionalAgitation || 0).toFixed(3)}`
             }
@@ -827,14 +827,14 @@ class MultiHeaderCSVAnalyzer {
         
         if (valueEl) {
             if (feature.unit === '') {
-                valueEl.textContent = feature.score.toFixed(3);
+                valueEl.textContent = (feature.score || 0).toFixed(3);
             } else {
-                valueEl.textContent = `${feature.raw.toFixed(2)}${feature.unit}`;
+                valueEl.textContent = `${(feature.raw || 0).toFixed(2)}${feature.unit}`;
             }
         }
         
         if (meterEl) {
-            const percentage = Math.max(0, Math.min(100, feature.score * 100));
+            const percentage = Math.max(0, Math.min(100, (feature.score || 0) * 100));
             meterEl.style.width = `${percentage}%`;
             
             // スコアに応じて色を調整
