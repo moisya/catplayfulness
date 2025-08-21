@@ -598,4 +598,126 @@ class MultiHeaderCSVAnalyzer {
             if (el && idx <= cur) el.classList.add('completed'); 
         });
     }
+    
+    /* ===================== feature display ===================== */
+    
+    updateFeatureDisplay(currentMetric) {
+        if (!currentMetric) return;
+        
+        // 各特徴量の値と正規化された値を取得
+        const features = {
+            tailUp: {
+                raw: currentMetric.tailAngleMean,
+                score: currentMetric.tailUpScore,
+                unit: '°',
+                description: `角度: ${(currentMetric.tailAngleMean || 0).toFixed(1)}°`
+            },
+            earForward: {
+                raw: currentMetric.earForwardMean,
+                score: currentMetric.earForwardScore,
+                unit: '°',
+                description: `角度: ${(currentMetric.earForwardMean || 0).toFixed(1)}°`
+            },
+            tailBend: {
+                raw: currentMetric.tailBendMean,
+                score: currentMetric.tailBendScore,
+                unit: '°',
+                description: `角度: ${(currentMetric.tailBendMean || 0).toFixed(1)}°`
+            },
+            wagFreq: {
+                raw: currentMetric.wagFreqHz,
+                score: currentMetric.wagScore,
+                unit: 'Hz',
+                description: `周波数: ${(currentMetric.wagFreqHz || 0).toFixed(2)}Hz`
+            },
+            angVel: {
+                raw: currentMetric.angVelStd,
+                score: currentMetric.activityScore,
+                unit: '°/s',
+                description: `変動: ${(currentMetric.angVelStd || 0).toFixed(1)}°/s`
+            }
+        };
+        
+        // DOM要素を更新
+        this.updateFeatureCard('tailUp', features.tailUp, '尻尾上がり度');
+        this.updateFeatureCard('earForward', features.earForward, '耳前向き度');
+        this.updateFeatureCard('tailBend', features.tailBend, '尻尾曲げ度');
+        this.updateFeatureCard('wagFreq', features.wagFreq, '振り周波数');
+        this.updateFeatureCard('angVel', features.angVel, '角速度運動');
+        
+        // 総合スコア
+        const totalScore = currentMetric.playIndex;
+        this.updateFeatureCard('totalPlay', {
+            raw: totalScore,
+            score: totalScore,
+            unit: '',
+            description: `総合指標: ${totalScore.toFixed(3)}`
+        }, 'Playfulness');
+    }
+    
+    updateFeatureCard(prefix, feature, label) {
+        const valueEl = document.getElementById(`${prefix}Value`);
+        const meterEl = document.getElementById(`${prefix}Meter`);
+        
+        if (valueEl) {
+            if (feature.unit === '') {
+                valueEl.textContent = feature.score.toFixed(3);
+            } else {
+                valueEl.textContent = `${feature.raw.toFixed(2)}${feature.unit}`;
+            }
+        }
+        
+        if (meterEl) {
+            const percentage = Math.max(0, Math.min(100, feature.score * 100));
+            meterEl.style.width = `${percentage}%`;
+            
+            // スコアに応じて色を調整
+            if (prefix === 'wagFreq') {
+                // 周波数は4Hz付近が最適なので特別処理
+                const optimal = Math.exp(-0.5 * Math.pow((feature.raw - 4) / 1.5, 2));
+                meterEl.style.width = `${optimal * 100}%`;
+            }
+        }
+    }
+    
+    /* ===================== chart interaction ===================== */
+    
+    setupChartClickHandler(chart, metrics) {
+        if (!chart || !metrics) return;
+        
+        chart.options.onClick = (event, elements) => {
+            if (elements.length > 0) {
+                const dataIndex = elements[0].index;
+                const currentMetric = metrics[dataIndex];
+                if (currentMetric) {
+                    this.updateFeatureDisplay(currentMetric);
+                    
+                    // 時刻表示も更新
+                    const timeEl = document.getElementById('currentTime');
+                    if (timeEl) {
+                        timeEl.textContent = currentMetric.timeCenter.toFixed(1);
+                    }
+                    
+                    // ビデオシークも実行
+                    const video = document.getElementById('resultVideo');
+                    if (video && !isNaN(currentMetric.timeCenter)) {
+                        video.currentTime = currentMetric.timeCenter;
+                    }
+                }
+            }
+        };
+        
+        // マウスホバーでも特徴量表示を更新
+        chart.options.onHover = (event, elements) => {
+            if (elements.length > 0) {
+                const dataIndex = elements[0].index;
+                const currentMetric = metrics[dataIndex];
+                if (currentMetric) {
+                    this.updateFeatureDisplay(currentMetric);
+                }
+            }
+        };
+        
+        chart.update();
+    }
 }
