@@ -934,6 +934,50 @@
                         timeEl.textContent = currentTime.toFixed(1);
                     }
                 }
+                
+                // チャートの縦バーを更新
+                this.updateChartTimeline(currentTime);
+            }
+            
+            updateChartTimeline(currentTime) {
+                if (!this.chart) return;
+                
+                // 既存の縦線プラグインを削除
+                const existingPlugin = this.chart.config.plugins?.find(p => p.id === 'timelineLine');
+                if (existingPlugin) {
+                    const index = this.chart.config.plugins.indexOf(existingPlugin);
+                    this.chart.config.plugins.splice(index, 1);
+                }
+                
+                // 新しい縦線プラグインを追加
+                const timelinePlugin = {
+                    id: 'timelineLine',
+                    afterDraw: (chart) => {
+                        const ctx = chart.ctx;
+                        const chartArea = chart.chartArea;
+                        const xScale = chart.scales.x;
+                        
+                        if (currentTime >= xScale.min && currentTime <= xScale.max) {
+                            const x = xScale.getPixelForValue(currentTime);
+                            
+                            ctx.save();
+                            ctx.strokeStyle = '#ff6b6b';
+                            ctx.lineWidth = 3;
+                            ctx.setLineDash([5, 5]);
+                            ctx.beginPath();
+                            ctx.moveTo(x, chartArea.top);
+                            ctx.lineTo(x, chartArea.bottom);
+                            ctx.stroke();
+                            ctx.restore();
+                        }
+                    }
+                };
+                
+                if (!this.chart.config.plugins) {
+                    this.chart.config.plugins = [];
+                }
+                this.chart.config.plugins.push(timelinePlugin);
+                this.chart.update('none');
             }
 
             initializeChart() {
@@ -1018,6 +1062,9 @@
                                     if (this.video && !isNaN(currentMetric.timeCenter)) {
                                         this.video.currentTime = currentMetric.timeCenter;
                                     }
+                                    
+                                    // チャートの縦バーを更新
+                                    this.updateChartTimeline(currentMetric.timeCenter);
                                 }
                             }
                         },
@@ -1036,6 +1083,11 @@
                 // 初期表示（最初のデータポイント）
                 if (this.results.metrics.length > 0 && window.lastAnalyzer) {
                     window.lastAnalyzer.updateFeatureDisplay(this.results.metrics[0]);
+                    
+                    // 初期の縦バーも表示
+                    if (this.video) {
+                        this.updateChartTimeline(this.video.currentTime || 0);
+                    }
                 }
             }
 
