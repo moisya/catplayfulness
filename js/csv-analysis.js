@@ -283,11 +283,21 @@ class MultiHeaderCSVAnalyzer {
             const earForward = seg(feat.earForward);
             const angVel = seg(feat.angVel);
             const noseSpeed = seg(feat.noseSpeed);
+            // ADD:
+            const earForwardScoreSeg = seg(feat.earForwardScoreFrame);
+            const airplaneSeg = seg(feat.airplaneIdx);
 
             // 周波数解析
             const wag = this.dominantFreqHz(seg(feat.tailAngleInterp), fps);
             const wagFreq = wag.f || 0;
             const wagPower = wag.p || 0;
+            
+            // lashing（バシバシ）検出
+            const lashPow = this.bandPowerDFT(seg(feat.tailAngleInterp), fps, 0.3, 1.2);
+            const totalPow = this.bandPowerDFT(seg(feat.tailAngleInterp), fps, 0.3, 12);
+            const amp = this.percentile(tailAngle.filter(Number.isFinite), 90) - 
+                       this.percentile(tailAngle.filter(Number.isFinite), 10);
+            const lashingPenalty = this.clamp01((lashPow / (totalPow + 1e-9)) * Math.max(0, this.robustZ(amp, feat.tailAngle)));
 
             // 特徴量統計
             const tailAngleMean = this.mean(tailAngle);
@@ -295,6 +305,15 @@ class MultiHeaderCSVAnalyzer {
             const earForwardMean = this.mean(earForward);
             const angVelStd = this.std(angVel);
             const noseMovementMean = this.mean(noseSpeed);
+            // ADD: スコア平均（0〜1）
+            const earForwardScoreMean = this.mean(earForwardScoreSeg);
+            const airplaneMean = this.mean(airplaneSeg);
+            
+            // 条件付きagitationPenalty（ネガ徴候時のみ減点）
+            const torsoSpeed = noseMovementMean; // 胴体基準速度の代替として鼻速度を使用
+            const zSpeed = this.robustZ(torsoSpeed, feat.noseSpeed);
+            const a = 1.0, b = 0.6, tau1 = 0.4, tau2 = 1.0; // 推奨初期値
+            const conditionalAgitation = this.sigmoid(a * (lashingPenalty + airplaneMean - tau1) + b * Math.max(0, zSpeed - tau2));
 
             // 0–1正規化（パーセンタイル）
             const nz = v => v.filter(Number.isFinite);
@@ -305,22 +324,31 @@ class MultiHeaderCSVAnalyzer {
                 return arr.map(x => !Number.isFinite(x) ? 0 : (qh > ql ? Math.min(1, Math.max(0, (x - ql) / (qh - ql))) : 0));
             };
 
-            const tailUpScore = this.inverseArr(pScale(tailAngle));     // 角が小さい＝上向き
-            const earFwdScore = this.inverseArr(pScale(earForward));    // 小さい＝前向き
-            const tailBendScore = pScale(tailBend);                     // 大きい＝曲げ大
-            const agitationPen = this.mean(noseSpeed);                  // 全体の粗い活動（高いほど減点）
+            const tailUpScore = this.mean(this.inverseArr(pScale(tailAngle)));     // 角が小さい＝上向き（胴体基準）
+            const earForwardScore = earForwardScoreMean; // 0〜1（既に正規化済み、頭基準）
+            const tailBendScore = this.mean(pScale(tailBend));                     // 大きい＝曲げ大
+            const airplanePenalty = airplaneMean;        // イカ耳ペナルティ
+            const agitationPenalty = conditionalAgitation; // 条件付きagitation
 
-            // 周波数スコア（4Hz付近を最適とする）
-            const wagPref = (Number.isFinite(wagFreq)) ? Math.exp(-0.5 * Math.pow((wagFreq - 4) / (1.5), 2)) : 0.5;
+            // 周波数スコア（帯域ベース、固定4Hz廃止）
+            const playBandPow = this.bandPowerDFT(seg(feat.tailAngleInterp), fps, 2, 6);
+            const totalSpecPow = this.bandPowerDFT(seg(feat.tailAngleInterp), fps, 0.3, 12);
+            const wagScore = this.clamp01(playBandPow / (totalSpecPow + 1e-9));
 
-            // 合成（重み付きスコア）
-            const w_tailUp = 0.35, w_ear = 0.35, w_bend = 0.25, w_wag = 0.10, w_ang = 0.15, w_agit = -0.20;
-            const base = this.mean(tailUpScore) * w_tailUp
-                + this.mean(earFwdScore) * w_ear
-                + this.mean(tailBendScore) * w_bend
-                + (Number.isFinite(wagPref) ? wagPref * w_wag : 0)
-                + (Number.isFinite(angVelStd) ? (angVelStd / (this.eps + this.std(seg(feat.angVelAll)))) * w_ang : 0)
-                + (Number.isFinite(agitationPen) ? (1 - Math.min(1, agitationPen / 30)) * w_agit : 0);
+            // 改善版重み付け（合計≤1、ペナルティ別項）
+            // メイン加点: 尻尾28%, 耳24%, 曲げ18%, 振り18%, 活動12%
+            let playfulness = tailUpScore * 0.28
+                + earForwardScore * 0.24
+                + tailBendScore * 0.18
+                + wagScore * 0.18
+                + (Number.isFinite(angVelStd) ? (angVelStd / (this.eps + this.std(seg(feat.angVelAll)))) * 0.12 : 0);
+            
+            // ペナルティ（別項で減点）
+            playfulness -= airplanePenalty * 0.10;    // イカ耳ペナルティ
+            playfulness -= lashingPenalty * 0.12;     // バシバシペナルティ  
+            playfulness -= agitationPenalty * 0.08;   // 条件付き過活動ペナルティ
+            
+            const base = this.clamp01(playfulness);
 
             // 📊 詳細メトリクス追加（新UIで表示される）
             metrics.push({
@@ -337,11 +365,14 @@ class MultiHeaderCSVAnalyzer {
                 noseMovement: noseMovementMean,         // 鼻の動き
 
                 // 🔍 個別スコア（デバッグ用）
-                tailUpScore: this.mean(tailUpScore),
-                earForwardScore: this.mean(earFwdScore),
-                tailBendScore: this.mean(tailBendScore),
-                wagScore: wagPref,
+                tailUpScore: tailUpScore,
+                earForwardScore: earForwardScore,
+                tailBendScore: tailBendScore,
+                wagScore: wagScore, // 帯域ベース版
                 activityScore: Number.isFinite(angVelStd) ? Math.min(1, angVelStd / 50) : 0,
+                airplanePenalty: airplanePenalty,    // イカ耳ペナルティ
+                lashingPenalty: lashingPenalty,      // バシバシペナルティ（新規）
+                agitationPenalty: agitationPenalty,  // 条件付き過活動ペナルティ（新規）
 
                 // 📈 生データ統計（上級者向け）
                 rawTailAngles: tailAngle.filter(v => !isNaN(v)),
@@ -414,11 +445,17 @@ class MultiHeaderCSVAnalyzer {
         this.log('フレーム特徴量計算開始...');
 
         for (let i = 0; i < N; i++) {
-            // しっぽ角（垂直との角度）
-            if (likeOK(map.tail_base, i) && likeOK(map.tail_end, i)) {
-                const vx = val(map.tail_end, 'x', i) - val(map.tail_base, 'x', i);
-                const vy = val(map.tail_end, 'y', i) - val(map.tail_base, 'y', i);
-                tailAngle[i] = this.angleDeg(0, -1, vx, vy); // 上=0°
+            // しっぽ角（胴体基準での相対角度）
+            if (likeOK(map.tail_base, i) && likeOK(map.tail_end, i) && 
+                (likeOK(map.back_middle, i) || likeOK(map.back_end, i))) {
+                const bx = likeOK(map.back_middle, i) ? val(map.back_middle, 'x', i) : val(map.back_end, 'x', i);
+                const by = likeOK(map.back_middle, i) ? val(map.back_middle, 'y', i) : val(map.back_end, 'y', i);
+                const tx = val(map.tail_base, 'x', i), ty = val(map.tail_base, 'y', i);
+                const ex = val(map.tail_end, 'x', i), ey = val(map.tail_end, 'y', i);
+                
+                const ax = tx - bx, ay = ty - by;       // 胴体軸
+                const vx = ex - tx, vy = ey - ty;       // 尾ベクトル
+                tailAngle[i] = this.angleDeg(ax, ay, vx, vy);  // 0°=胴体軸と一致＝上げ
             }
 
             // しっぽ曲げ角： back_end → tail_base → tail_end の外角
@@ -429,28 +466,63 @@ class MultiHeaderCSVAnalyzer {
                 tailBend[i] = this.angleAt(bx, by, tx, ty, ex, ey);
             }
 
-            // 耳の前向き度：頭軸（nose→neck）と左右耳ベクトル（base→end）との角の平均
+            // === 耳の前向き度（REPLACE: 旧ロジックをこのブロックに差し替え） ===
             if (likeOK(map.nose, i) && (likeOK(map.neck_base, i) || likeOK(map.back_middle, i))) {
+                // 頭の前方軸 F と側方軸 L を作る（nose 方向を前）
                 const kx = likeOK(map.neck_base, i) ? val(map.neck_base, 'x', i) : val(map.back_middle, 'x', i);
                 const ky = likeOK(map.neck_base, i) ? val(map.neck_base, 'y', i) : val(map.back_middle, 'y', i);
                 const nx = val(map.nose, 'x', i), ny = val(map.nose, 'y', i);
-                const hx = nx - kx, hy = ny - ky; // 頭→鼻
+                let [Fx, Fy] = this.norm2(nx - kx, ny - ky);
+                if (Number.isFinite(Fx)) {
+                    let [Lx, Ly] = this.rot90(Fx, Fy); // 側方軸
+                    const Lset = [['left_ear_base', 'left_ear_end'], ['right_ear_base', 'right_ear_end']];
+                    const perEar = [];
 
-                const earAng = [];
-                const Lset = [['left_ear_base', 'left_ear_end'], ['right_ear_base', 'right_ear_end']];
-                for (const [eb, ee] of Lset) {
-                    if (likeOK(map[eb], i) && likeOK(map[ee], i)) {
-                        const ex = val(map[ee], 'x', i) - val(map[eb], 'x', i);
-                        const ey = val(map[ee], 'y', i) - val(map[eb], 'y', i);
-                        earAng.push(this.vecAngleDeg(hx, hy, ex, ey));
-                    } else if (likeOK(map[eb], i)) {
-                        // 先端が無ければ base→鼻 を代替
-                        const ex = nx - val(map[eb], 'x', i);
-                        const ey = ny - val(map[eb], 'y', i);
-                        earAng.push(this.vecAngleDeg(hx, hy, ex, ey));
+                    for (const [eb, ee] of Lset) {
+                        if (!likeOK(map[eb], i)) continue;
+
+                        // 耳ベクトル v：tip が無ければ nose を代替
+                        let vx, vy;
+                        if (likeOK(map[ee], i)) {
+                            vx = val(map[ee], 'x', i) - val(map[eb], 'x', i);
+                            vy = val(map[ee], 'y', i) - val(map[eb], 'y', i);
+                        } else {
+                            vx = nx - val(map[eb], 'x', i);
+                            vy = ny - val(map[eb], 'y', i);
+                        }
+                        const vn = Math.hypot(vx, vy);
+                        if (!vn) continue;
+                        vx /= vn; vy /= vn;
+
+                        // 前方成分 f と側方成分 l
+                        const f = vx*Fx + vy*Fy;           // [-1,1] 前（+）/ 後（-）
+                        const l = Math.abs(vx*Lx + vy*Ly); // [0,1] 側方の強さ
+
+                        // 表示用角度（旧API互換）：頭前方軸 vs 耳ベクトル
+                        const angle = this.vecAngleDeg(Fx, Fy, vx, vy); // 小さいほど前向き
+
+                        // 新しい前向きスコア：前方成分が大・側方成分が小で高得点
+                        //   forwardness ≈ 1  … f≫0 & l≪0   （素直に前）
+                        //   forwardness ≈ 0  … f≤0 or l≫0   （後ろ/横＝イカ耳）
+                        const forwardness = this.clamp01( 0.5*(f - l) + 0.5 );
+
+                        // イカ耳らしさ（側方が大きく、かつ前方が弱い/負）
+                        const airplane = (l > 0.6 && forwardness < 0.4) ? 1 : 0;
+
+                        perEar.push({ angle, forwardness, airplane });
+                    }
+
+                    if (perEar.length) {
+                        // 角度系列（可視化・統計用）は従来通り保持
+                        earForward[i] = perEar.reduce((s,e)=>s+e.angle,0)/perEar.length;
+
+                        // 追加：フレーム毎の耳前向きスコア＆イカ耳指標を保持（後段で利用）
+                        if (!this._earForwardScoreFrame) this._earForwardScoreFrame = new Array(N).fill(NaN);
+                        if (!this._airplaneIdx) this._airplaneIdx = new Array(N).fill(0);
+                        this._earForwardScoreFrame[i] = perEar.reduce((s,e)=>s+e.forwardness,0)/perEar.length;
+                        this._airplaneIdx[i]          = perEar.reduce((s,e)=>s+e.airplane,0)/perEar.length;
                     }
                 }
-                if (earAng.length) earForward[i] = earAng.reduce((a, b) => a + b, 0) / earAng.length; // 小さいほど前向き
             }
 
             // 鼻スピード（活動度の粗指標）
@@ -487,10 +559,29 @@ class MultiHeaderCSVAnalyzer {
             }
         }
 
-        return { tailAngle, tailAngleInterp, tailBend, earForward, angVel, angVelAll: angVel.slice(), noseSpeed };
+        return { 
+            tailAngle, tailAngleInterp, tailBend, earForward, angVel, angVelAll: angVel.slice(), noseSpeed,
+            // ADD:
+            earForwardScoreFrame: this._earForwardScoreFrame || new Array(N).fill(NaN),
+            airplaneIdx: this._airplaneIdx || new Array(N).fill(0)
+        };
     }
 
     /* ===================== math helpers ===================== */
+
+    // === helpers (ADD) ===
+    clamp01(x) { 
+        return Math.max(0, Math.min(1, x)); 
+    }
+    
+    norm2(ax, ay) { 
+        const n = Math.hypot(ax, ay); 
+        return n ? [ax/n, ay/n] : [NaN, NaN]; 
+    }
+    
+    rot90(ax, ay) { 
+        return [-ay, ax]; // 90°回転（左向き）
+    }
 
     mean(a) { 
         const v = a.filter(Number.isFinite); 
@@ -572,6 +663,60 @@ class MultiHeaderCSVAnalyzer {
             }
         }
         return { f: bestF, p: bestP };
+    }
+    
+    // 帯域パワー計算（簡易DFT版）
+    bandPowerDFT(series, fps, f1, f2) {
+        const x = this.interpNaN(series);
+        const n = x.length;
+        if (n < 8 || fps <= 0) return 0;
+        
+        // DC除去
+        const m = this.mean(x); 
+        for (let i = 0; i < n; i++) x[i] -= m;
+        
+        let totalPower = 0;
+        for (let k = 1; k <= Math.floor(n / 2); k++) {
+            const f = k * fps / n;
+            if (f >= f1 && f <= f2) {
+                let re = 0, im = 0;
+                for (let t = 0; t < n; t++) {
+                    const ang = -2 * Math.PI * k * t / n;
+                    re += x[t] * Math.cos(ang); 
+                    im += x[t] * Math.sin(ang);
+                }
+                totalPower += re * re + im * im;
+            }
+        }
+        return totalPower;
+    }
+    
+    // ロバストZスコア（中央値ベース）
+    robustZ(value, array) {
+        const valid = array.filter(Number.isFinite);
+        if (valid.length < 3) return 0;
+        
+        valid.sort((a, b) => a - b);
+        const median = valid[Math.floor(valid.length / 2)];
+        const mad = this.mean(valid.map(v => Math.abs(v - median)));
+        
+        return mad > 0 ? (value - median) / (1.4826 * mad) : 0;
+    }
+    
+    // パーセンタイル計算
+    percentile(array, p) {
+        const sorted = array.filter(Number.isFinite).sort((a, b) => a - b);
+        if (sorted.length === 0) return 0;
+        const index = (p / 100) * (sorted.length - 1);
+        const lower = Math.floor(index);
+        const upper = Math.ceil(index);
+        if (lower === upper) return sorted[lower];
+        return sorted[lower] * (upper - index) + sorted[upper] * (index - lower);
+    }
+    
+    // シグモイド関数
+    sigmoid(x) {
+        return 1 / (1 + Math.exp(-x));
     }
 
     /* ===================== logging/UI ===================== */
