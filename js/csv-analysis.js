@@ -866,3 +866,4 @@ class MultiHeaderCSVAnalyzer {
         chart.update();
     }
 }
+
