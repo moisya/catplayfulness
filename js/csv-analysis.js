@@ -384,7 +384,7 @@ class MultiHeaderCSVAnalyzer {
             const progress = 60 + ((startIdx / numFrames) * 20);
             this.updateProgress(progress, `解析中: ${Math.round((startIdx / numFrames) * 100)}%`);
             
-            if (a % (hop * 10) === 0) {
+            if (startIdx % (hop * 10) === 0) {
                 await new Promise(resolve => setTimeout(resolve, 1));
             }
         }
@@ -866,4 +866,3 @@ class MultiHeaderCSVAnalyzer {
         chart.update();
     }
 }
-
