@@ -955,41 +955,10 @@
             updateChartTimeline(currentTime) {
                 if (!this.chart) return;
                 
-                // 既存の縦線プラグインを削除
-                const existingPlugin = this.chart.config.plugins?.find(p => p.id === 'timelineLine');
-                if (existingPlugin) {
-                    const index = this.chart.config.plugins.indexOf(existingPlugin);
-                    this.chart.config.plugins.splice(index, 1);
-                }
+                // 現在時刻を保存
+                this.currentVideoTime = currentTime;
                 
-                // 新しい縦線プラグインを追加
-                const timelinePlugin = {
-                    id: 'timelineLine',
-                    afterDraw: (chart) => {
-                        const ctx = chart.ctx;
-                        const chartArea = chart.chartArea;
-                        const xScale = chart.scales.x;
-                        
-                        if (currentTime >= xScale.min && currentTime <= xScale.max) {
-                            const x = xScale.getPixelForValue(currentTime);
-                            
-                            ctx.save();
-                            ctx.strokeStyle = '#ff6b6b';
-                            ctx.lineWidth = 3;
-                            ctx.setLineDash([5, 5]);
-                            ctx.beginPath();
-                            ctx.moveTo(x, chartArea.top);
-                            ctx.lineTo(x, chartArea.bottom);
-                            ctx.stroke();
-                            ctx.restore();
-                        }
-                    }
-                };
-                
-                if (!this.chart.config.plugins) {
-                    this.chart.config.plugins = [];
-                }
-                this.chart.config.plugins.push(timelinePlugin);
+                // チャートを再描画（プラグインが現在時刻を参照して線を描画）
                 this.chart.update('none');
             }
 
@@ -1010,6 +979,32 @@
                     y: metric.playIndex
                 }));
 
+                // 縦線プラグインを定義
+                const timelinePlugin = {
+                    id: 'timelineLine',
+                    afterDraw: (chart) => {
+                        if (!this.currentVideoTime) return;
+                        
+                        const ctx = chart.ctx;
+                        const chartArea = chart.chartArea;
+                        const xScale = chart.scales.x;
+                        
+                        if (this.currentVideoTime >= xScale.min && this.currentVideoTime <= xScale.max) {
+                            const x = xScale.getPixelForValue(this.currentVideoTime);
+                            
+                            ctx.save();
+                            ctx.strokeStyle = '#ff6b6b';
+                            ctx.lineWidth = 3;
+                            ctx.setLineDash([5, 5]);
+                            ctx.beginPath();
+                            ctx.moveTo(x, chartArea.top);
+                            ctx.lineTo(x, chartArea.bottom);
+                            ctx.stroke();
+                            ctx.restore();
+                        }
+                    }
+                };
+
                 this.chart = new Chart(chartCtx, {
                     type: 'line',
                     data: {
@@ -1028,6 +1023,7 @@
                             fill: true
                         }]
                     },
+                    plugins: [timelinePlugin],
                     options: {
                         responsive: true,
                         maintainAspectRatio: false,
