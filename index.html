@@ -597,12 +597,6 @@
                 <div class="video-section">
                     <h3>🎥 動画</h3>
                     <video id="resultVideo" controls preload="metadata"></video>
-                    <div class="video-controls">
-                        <button onclick="playPause()">⏯️ 再生/停止</button>
-                        <button onclick="seekToTime(10)">⏭️ 10秒</button>
-                        <button onclick="seekToTime(30)">⏭️ 30秒</button>
-                        <button onclick="seekToTime(60)">⏭️ 60秒</button>
-                    </div>
                     <div class="time-info">
                         現在時刻: <span id="currentTime">0.0</span>秒
                     </div>
@@ -902,6 +896,43 @@
                     const videoURL = URL.createObjectURL(this.videoFile);
                     this.video.src = videoURL;
                     this.video.style.display = 'block';
+                    
+                    // 動画の時刻変更イベントリスナーを追加
+                    this.video.addEventListener('timeupdate', () => {
+                        this.updateFeaturesFromVideoTime();
+                    });
+                    
+                    this.video.addEventListener('seeked', () => {
+                        this.updateFeaturesFromVideoTime();
+                    });
+                }
+            }
+            
+            updateFeaturesFromVideoTime() {
+                if (!this.video || !this.results || !this.results.metrics) return;
+                
+                const currentTime = this.video.currentTime;
+                
+                // 現在の動画時刻に最も近いメトリクスを見つける
+                let closestMetric = null;
+                let minDiff = Infinity;
+                
+                for (const metric of this.results.metrics) {
+                    const diff = Math.abs(metric.timeCenter - currentTime);
+                    if (diff < minDiff) {
+                        minDiff = diff;
+                        closestMetric = metric;
+                    }
+                }
+                
+                if (closestMetric && window.lastAnalyzer) {
+                    window.lastAnalyzer.updateFeatureDisplay(closestMetric);
+                    
+                    // 時刻表示を更新
+                    const timeEl = document.getElementById('currentTime');
+                    if (timeEl) {
+                        timeEl.textContent = currentTime.toFixed(1);
+                    }
                 }
             }
 
@@ -1024,24 +1055,6 @@
             }
         }
 
-        // グローバル関数
-        function playPause() {
-            const video = document.getElementById('resultVideo');
-            if (video) {
-                if (video.paused) {
-                    video.play();
-                } else {
-                    video.pause();
-                }
-            }
-        }
-
-        function seekToTime(seconds) {
-            const video = document.getElementById('resultVideo');
-            if (video) {
-                video.currentTime = seconds;
-            }
-        }
 
         // 初期化
         document.addEventListener('DOMContentLoaded', function() {
