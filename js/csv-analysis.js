@@ -780,6 +780,24 @@ class MultiHeaderCSVAnalyzer {
                 score: currentMetric.activityScore,
                 unit: '°/s',
                 description: `変動: ${(currentMetric.angVelStd || 0).toFixed(1)}°/s`
+            },
+            airplane: {
+                raw: currentMetric.airplaneMean,
+                score: currentMetric.airplanePenalty,
+                unit: '',
+                description: `イカ耳率: ${((currentMetric.airplaneMean || 0) * 100).toFixed(1)}%`
+            },
+            lashing: {
+                raw: currentMetric.lashingPenalty,
+                score: currentMetric.lashingPenalty,
+                unit: '',
+                description: `バシバシ強度: ${(currentMetric.lashingPenalty || 0).toFixed(3)}`
+            },
+            agitation: {
+                raw: currentMetric.conditionalAgitation,
+                score: currentMetric.conditionalAgitation,
+                unit: '',
+                description: `過活動度: ${(currentMetric.conditionalAgitation || 0).toFixed(3)}`
             }
         };
         
@@ -789,6 +807,9 @@ class MultiHeaderCSVAnalyzer {
         this.updateFeatureCard('tailBend', features.tailBend, '尻尾曲げ度');
         this.updateFeatureCard('wagFreq', features.wagFreq, '振り周波数');
         this.updateFeatureCard('angVel', features.angVel, '角速度運動');
+        this.updateFeatureCard('airplane', features.airplane, 'イカ耳ペナルティ');
+        this.updateFeatureCard('lashing', features.lashing, 'バシバシペナルティ');
+        this.updateFeatureCard('agitation', features.agitation, '条件付き過活動ペナルティ');
         
         // 総合スコア
         const totalScore = currentMetric.playIndex;
