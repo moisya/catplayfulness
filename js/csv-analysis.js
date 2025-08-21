@@ -274,9 +274,9 @@ class MultiHeaderCSVAnalyzer {
 
         // === ウィンドウ集約 ===
         const metrics = [];
-        for (let a = 0; a + win <= numFrames; a += hop) {
-            const b = a + win;
-            const seg = (arr) => arr.slice(a, b);
+        for (let startIdx = 0; startIdx + win <= numFrames; startIdx += hop) {
+            const endIdx = startIdx + win;
+            const seg = (arr) => arr.slice(startIdx, endIdx);
             
             const tailAngle = seg(feat.tailAngle);
             const tailBend = seg(feat.tailBend);
@@ -312,8 +312,8 @@ class MultiHeaderCSVAnalyzer {
             // 条件付きagitationPenalty（ネガ徴候時のみ減点）
             const torsoSpeed = noseMovementMean; // 胴体基準速度の代替として鼻速度を使用
             const zSpeed = this.robustZ(torsoSpeed, feat.noseSpeed);
-            const a = 1.0, b = 0.6, tau1 = 0.4, tau2 = 1.0; // 推奨初期値
-            const conditionalAgitation = this.sigmoid(a * (lashingPenalty + airplaneMean - tau1) + b * Math.max(0, zSpeed - tau2));
+            const alpha = 1.0, beta = 0.6, tau1 = 0.4, tau2 = 1.0; // 推奨初期値
+            const conditionalAgitation = this.sigmoid(alpha * (lashingPenalty + airplaneMean - tau1) + beta * Math.max(0, zSpeed - tau2));
 
             // 0–1正規化（パーセンタイル）
             const nz = v => v.filter(Number.isFinite);
@@ -352,7 +352,7 @@ class MultiHeaderCSVAnalyzer {
 
             // 📊 詳細メトリクス追加（新UIで表示される）
             metrics.push({
-                timeCenter: (a + b) / (2 * fps),
+                timeCenter: (startIdx + endIdx) / (2 * fps),
                 playIndex: Math.max(0, Math.min(1, base)),
 
                 // 🎯 メイン特徴量（メーター表示用）
@@ -381,8 +381,8 @@ class MultiHeaderCSVAnalyzer {
             });
 
             // 進捗更新
-            const progress = 60 + ((a / numFrames) * 20);
-            this.updateProgress(progress, `解析中: ${Math.round((a / numFrames) * 100)}%`);
+            const progress = 60 + ((startIdx / numFrames) * 20);
+            this.updateProgress(progress, `解析中: ${Math.round((startIdx / numFrames) * 100)}%`);
             
             if (a % (hop * 10) === 0) {
                 await new Promise(resolve => setTimeout(resolve, 1));
