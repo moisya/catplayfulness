@@ -827,6 +827,19 @@
                 document.getElementById('analysisScreen').classList.add('hidden');
                 document.getElementById('resultsScreen').classList.add('hidden');
                 document.getElementById('uploadScreen').classList.remove('hidden');
+                
+                // ファイル選択状態をリセット
+                this.csvFile = null;
+                this.videoFile = null;
+                
+                // ファイル情報表示をクリア
+                const csvInfo = document.getElementById('csvFileInfo');
+                const videoInfo = document.getElementById('videoFileInfo');
+                if (csvInfo) csvInfo.innerHTML = '';
+                if (videoInfo) videoInfo.innerHTML = '';
+                
+                // ボタン状態をリセット
+                this.updateAnalyzeButton();
             }
         }
 
@@ -984,6 +997,12 @@
                 const ctx = document.getElementById('playChart');
                 if (!ctx) return;
                 
+                // 既存のChartを破棄
+                if (this.chart) {
+                    this.chart.destroy();
+                    this.chart = null;
+                }
+                
                 const chartCtx = ctx.getContext('2d');
                 
                 const data = this.results.metrics.map(metric => ({
@@ -1097,10 +1116,12 @@
                 
                 if (this.video && this.video.src) {
                     URL.revokeObjectURL(this.video.src);
+                    this.video = null;
                 }
                 
                 if (this.chart) {
                     this.chart.destroy();
+                    this.chart = null;
                 }
                 
                 window.uploader = new FileUploader();
