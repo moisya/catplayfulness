@@ -273,6 +273,9 @@ class MultiHeaderCSVAnalyzer {
         const feat = await this.calculateFrameFeaturesV2(coordinates, map, confidence, fps);
 
         // === ウィンドウ集約 ===
+        // グローバル標準偏差を事前計算（activityScore正規化用）
+        const globalAngVelStd = this.std(feat.angVelAll);
+        
         const metrics = [];
         for (let startIdx = 0; startIdx + win <= numFrames; startIdx += hop) {
             const endIdx = startIdx + win;
@@ -297,7 +300,9 @@ class MultiHeaderCSVAnalyzer {
             const totalPow = this.bandPowerDFT(seg(feat.tailAngleInterp), fps, 0.3, 12);
             const amp = this.percentile(tailAngle.filter(Number.isFinite), 90) - 
                        this.percentile(tailAngle.filter(Number.isFinite), 10);
-            const lashingPenalty = this.clamp01((lashPow / (totalPow + 1e-9)) * Math.max(0, this.robustZ(amp, feat.tailAngle)));
+            // 10〜60°を0〜1に写像（初期値。後でデータに合わせて微調整）
+            const ampNorm = this.clamp01((amp - 10) / 50);
+            const lashingPenalty = this.clamp01((lashPow / (totalPow + 1e-9)) * ampNorm);
 
             // 特徴量統計
             const tailAngleMean = this.mean(tailAngle);
@@ -337,11 +342,12 @@ class MultiHeaderCSVAnalyzer {
 
             // 改善版重み付け（合計≤1、ペナルティ別項）
             // メイン加点: 尻尾28%, 耳24%, 曲げ18%, 振り18%, 活動12%
+            const activityScore = Number.isFinite(angVelStd) ? Math.min(1, angVelStd / (this.eps + globalAngVelStd)) : 0;
             let playfulness = tailUpScore * 0.28
                 + earForwardScore * 0.24
                 + tailBendScore * 0.18
                 + wagScore * 0.18
-                + (Number.isFinite(angVelStd) ? (angVelStd / (this.eps + this.std(seg(feat.angVelAll)))) * 0.12 : 0);
+                + activityScore * 0.12;
             
             // ペナルティ（別項で減点）
             playfulness -= airplanePenalty * 0.10;    // イカ耳ペナルティ
@@ -369,10 +375,12 @@ class MultiHeaderCSVAnalyzer {
                 earForwardScore: earForwardScore,
                 tailBendScore: tailBendScore,
                 wagScore: wagScore, // 帯域ベース版
-                activityScore: Number.isFinite(angVelStd) ? Math.min(1, angVelStd / 50) : 0,
+                activityScore: activityScore,
                 airplanePenalty: airplanePenalty,    // イカ耳ペナルティ
                 lashingPenalty: lashingPenalty,      // バシバシペナルティ（新規）
                 agitationPenalty: agitationPenalty,  // 条件付き過活動ペナルティ（新規）
+                airplaneMean: airplaneMean,          // ← 追加
+                conditionalAgitation: conditionalAgitation, // ← 追加
 
                 // 📈 生データ統計（上級者向け）
                 rawTailAngles: tailAngle.filter(v => !isNaN(v)),
@@ -837,12 +845,7 @@ class MultiHeaderCSVAnalyzer {
             const percentage = Math.max(0, Math.min(100, (feature.score || 0) * 100));
             meterEl.style.width = `${percentage}%`;
             
-            // スコアに応じて色を調整
-            if (prefix === 'wagFreq') {
-                // 周波数は4Hz付近が最適なので特別処理
-                const optimal = Math.exp(-0.5 * Math.pow((feature.raw - 4) / 1.5, 2));
-                meterEl.style.width = `${optimal * 100}%`;
-            }
+            // 特別扱いを削除。feature.score（= wagScore）で幅更新に統一
         }
     }
     
@@ -886,4 +889,9 @@ class MultiHeaderCSVAnalyzer {
         
         chart.update();
     }
+}
+
+// ファイル末尾
+if (typeof window !== 'undefined') {
+  window.MultiHeaderCSVAnalyzer = MultiHeaderCSVAnalyzer;
 }
