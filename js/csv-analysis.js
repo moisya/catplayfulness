@@ -383,7 +383,7 @@ class MultiHeaderCSVAnalyzer {
             // 1) その窓の耳トラッキング信頼度（likelihood平均）を計算
             const earConfMean = (() => {
                 const L = coordinates._likelihood;
-                const parts = [mapping.left_ear_base, mapping.left_ear_end, mapping.right_ear_base, mapping.right_ear_end]
+                const parts = [map.left_ear_base, map.left_ear_end, map.right_ear_base, map.right_ear_end]
                             .filter(Boolean);
                 if (!parts.length) return 0;
                 let s = 0, c = 0;
